@@ -132,6 +132,16 @@ async function main() {
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.ideal_operacional, 30);
 
+  console.log('→ salvar só o checklist de erros não pode apagar o checklist do líder (nem vice-versa)');
+  r = await json('PUT', '/dashboard-config', { checklistErros: { reativo: true } }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.checklist_erros, { reativo: true });
+  r = await json('PUT', '/dashboard-config', { checklistLider: { 'planeja-dia': true } }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.checklist_lider, { 'planeja-dia': true });
+  assert.deepStrictEqual(r.body.checklist_erros, { reativo: true }); // <- não pode ter sido apagado pelo PUT anterior
+  assert.strictEqual(r.body.ideal_operacional, 30); // idem pros percentuais, que também não foram enviados agora
+
   console.log('→ excluir liderado remove também os registros do diário (cascade)');
   r = await json('DELETE', `/liderados/${liderado.id}`, null, tokenLider);
   assert.strictEqual(r.status, 204);

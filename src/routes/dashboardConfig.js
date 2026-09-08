@@ -17,17 +17,27 @@ router.get('/', requireAuth, requireLider, async (req, res) => {
 
 router.put('/', requireAuth, requireLider, async (req, res) => {
   const { idealOperacional, idealTatico, idealEstrategico, checklistErros, checklistLider } = req.body || {};
+
+  // Garante que a linha exista, sem mexer em nada se já existir — os valores
+  // de fato são aplicados pelo UPDATE abaixo, com COALESCE contra a linha
+  // já salva (nunca contra um "valor padrão" do INSERT, senão um PUT parcial
+  // apagaria o campo que não foi enviado).
+  await pool.query(`INSERT INTO dashboard_config (lider_id) VALUES ($1) ON CONFLICT (lider_id) DO NOTHING`, [req.user.id]);
+
   const { rows } = await pool.query(
-    `INSERT INTO dashboard_config (lider_id, ideal_operacional, ideal_tatico, ideal_estrategico, checklist_erros, checklist_lider)
-     VALUES ($1, COALESCE($2,30), COALESCE($3,40), COALESCE($4,30), COALESCE($5,'{}'::jsonb), COALESCE($6,'{}'::jsonb))
-     ON CONFLICT (lider_id) DO UPDATE SET
-       ideal_operacional = COALESCE(EXCLUDED.ideal_operacional, dashboard_config.ideal_operacional),
-       ideal_tatico = COALESCE(EXCLUDED.ideal_tatico, dashboard_config.ideal_tatico),
-       ideal_estrategico = COALESCE(EXCLUDED.ideal_estrategico, dashboard_config.ideal_estrategico),
-       checklist_erros = COALESCE(EXCLUDED.checklist_erros, dashboard_config.checklist_erros),
-       checklist_lider = COALESCE(EXCLUDED.checklist_lider, dashboard_config.checklist_lider)
+    `UPDATE dashboard_config SET
+       ideal_operacional = COALESCE($2, ideal_operacional),
+       ideal_tatico = COALESCE($3, ideal_tatico),
+       ideal_estrategico = COALESCE($4, ideal_estrategico),
+       checklist_erros = COALESCE($5, checklist_erros),
+       checklist_lider = COALESCE($6, checklist_lider)
+     WHERE lider_id = $1
      RETURNING *`,
-    [req.user.id, idealOperacional, idealTatico, idealEstrategico, checklistErros ? JSON.stringify(checklistErros) : null, checklistLider ? JSON.stringify(checklistLider) : null]
+    [
+      req.user.id, idealOperacional, idealTatico, idealEstrategico,
+      checklistErros ? JSON.stringify(checklistErros) : null,
+      checklistLider ? JSON.stringify(checklistLider) : null,
+    ]
   );
   res.json(rows[0]);
 });
