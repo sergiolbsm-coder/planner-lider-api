@@ -44,32 +44,26 @@ planner-lider-api/
 
 ## Como colocar no ar
 
-### 1. Criar o banco no Neon
+### 1. Pegar a connection string do Neon
 
-1. Acesse [neon.tech](https://neon.tech) e crie um novo projeto (ex: `planner-lider`).
+1. Acesse [neon.tech](https://neon.tech) → o projeto já criado (`planner`).
 2. Em **Connection Details**, copie a **connection string** (a versão "pooled" é a recomendada). Algo como:
    `postgresql://usuario:senha@ep-exemplo-pooler.neon.tech/neondb?sslmode=require`
 
-### 2. Rodar as migrações (criar as tabelas)
+Não precisa rodar nenhuma migração manual nem instalar nada localmente — o
+próprio servidor aplica o `schema.sql` sozinho toda vez que sobe (é seguro
+rodar de novo, tudo é `CREATE ... IF NOT EXISTS`). Cole a connection string
+direto no Render no próximo passo.
 
-Localmente, com Node instalado:
+### 2. Publicar a API no Render
 
-```bash
-npm install
-cp .env.example .env
-# edite o .env e cole a connection string do Neon em DATABASE_URL
-npm run migrate
-```
-
-### 3. Publicar a API no Render
-
-1. Suba este repositório no GitHub.
-2. No [Render](https://render.com), **New > Web Service**, conecte o repositório.
+1. Este repositório já está no GitHub.
+2. No [Render](https://render.com), **New > Web Service**, conecte o repositório `planner-lider-api`.
 3. Configurações do serviço:
    - **Build command:** `npm install`
    - **Start command:** `npm start`
 4. Em **Environment**, adicione as variáveis (nunca coloque no código nem no GitHub):
-   - `DATABASE_URL` — a connection string do Neon.
+   - `DATABASE_URL` — a connection string do Neon copiada acima.
    - `JWT_SECRET` — uma string aleatória longa. Gere uma com:
      ```bash
      node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
