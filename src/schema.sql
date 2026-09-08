@@ -121,7 +121,10 @@ CREATE TABLE IF NOT EXISTS plano_acao_itens (
 );
 CREATE INDEX IF NOT EXISTS idx_plano_acao_lider_id ON plano_acao_itens(lider_id);
 
--- Dashboard — configuração (alocação ideal + checklists), uma linha por líder.
+-- Dashboard — configuração (alocação ideal), uma linha por líder.
+-- checklist_erros/checklist_lider são de uma versão anterior (checklist fixo,
+-- sempre visível) e ficaram sem uso — substituídos por "autoavaliacoes" abaixo,
+-- que guarda uma resposta por mês e alimenta a análise de melhoria.
 CREATE TABLE IF NOT EXISTS dashboard_config (
   lider_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   ideal_operacional INT NOT NULL DEFAULT 30,
@@ -130,3 +133,16 @@ CREATE TABLE IF NOT EXISTS dashboard_config (
   checklist_erros JSONB NOT NULL DEFAULT '{}',
   checklist_lider JSONB NOT NULL DEFAULT '{}'
 );
+
+-- Autoavaliação mensal do líder (os mesmos itens do antigo checklist fixo,
+-- agora respondidos uma vez por mês) — base pra gerar a análise de melhoria.
+CREATE TABLE IF NOT EXISTS autoavaliacoes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  mes_ref TEXT NOT NULL, -- 'YYYY-MM'
+  respostas JSONB NOT NULL DEFAULT '{}',
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (lider_id, mes_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_autoavaliacoes_lider_id ON autoavaliacoes(lider_id);

@@ -21,6 +21,8 @@ process.env.PORT = '0'; // porta aleatória livre
 const memDb = newDb({ autoCreateForeignKeyIndices: true });
 memDb.public.registerFunction({ name: 'gen_random_uuid', returns: DataType.uuid, impure: true, implementation: () => crypto.randomUUID() });
 memDb.public.registerFunction({ name: 'now', returns: DataType.timestamptz, impure: true, implementation: () => new Date() });
+// pg-mem não implementa "date - date" (o Postgres de verdade devolve um integer de dias) — só pro teste.
+memDb.public.registerOperator({ operator: '-', left: DataType.date, right: DataType.date, returns: DataType.integer, implementation: (a, b) => (a === null || b === null) ? null : Math.round((a - b) / 86400000) });
 
 const schemaSql = fs.readFileSync(path.join(__dirname, '..', 'src', 'schema.sql'), 'utf8')
   .replace(/CREATE EXTENSION[^;]*;/i, ''); // pg-mem não precisa da extensão; a função já foi registrada acima
@@ -37,6 +39,7 @@ Module._load = function (request, ...rest) {
 const app = require('../src/app');
 
 async function main() {
+  const hoje = new Date().toISOString().slice(0, 10); // usa "hoje" de verdade, não uma data fixa
   const server = app.listen(0);
   const { port } = server.address();
   const base = `http://localhost:${port}`;
@@ -107,11 +110,11 @@ async function main() {
   assert.strictEqual(r.body.length, 1);
 
   console.log('→ líder lança um feedback formal');
-  r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'feedback', data: '2026-09-08', conversa: 'Conversamos sobre o plano de carreira.', plano: 'Assumir 1 projeto piloto.' }, tokenLider);
+  r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'feedback', data: hoje, conversa: 'Conversamos sobre o plano de carreira.', plano: 'Assumir 1 projeto piloto.' }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
 
   console.log('→ líder lança uma observação com risco psicossocial (não deve vazar pro liderado)');
-  r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'observacao', data: '2026-09-08', riscos: ['sobrecarga'], sinais: 'Chegou atrasado duas vezes.' }, tokenLider);
+  r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'observacao', data: hoje, riscos: ['sobrecarga'], sinais: 'Chegou atrasado duas vezes.' }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
 
   console.log('→ liderado só vê o feedback formal, nunca a observação/risco interno');
@@ -141,6 +144,30 @@ async function main() {
   assert.deepStrictEqual(r.body.checklist_lider, { 'planeja-dia': true });
   assert.deepStrictEqual(r.body.checklist_erros, { reativo: true }); // <- não pode ter sido apagado pelo PUT anterior
   assert.strictEqual(r.body.ideal_operacional, 30); // idem pros percentuais, que também não foram enviados agora
+
+  console.log('→ estatísticas de reuniões contam os registros do diário e apontam o líder sem parar');
+  r = await json('GET', '/diario/estatisticas', null, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.ultimos7Dias, 2); // o feedback + a observação lançados acima
+  assert.strictEqual(r.body.acumuladoAno, 2);
+  // 0 ou 1 pela diferença de fuso entre a data inserida (UTC) e o CURRENT_DATE
+  // interno do pg-mem — no Postgres de verdade isso é sempre 0 aqui, é só o mock.
+  assert.ok(r.body.diasSemReuniao === 0 || r.body.diasSemReuniao === 1, `esperado 0 ou 1, veio ${r.body.diasSemReuniao}`);
+  assert.strictEqual(r.body.porLiderado.length, 1);
+  assert.strictEqual(r.body.porLiderado[0].total, 2);
+
+  console.log('→ autoavaliação mensal: mês novo vem vazio, upsert grava e não duplica');
+  const mesRef = hoje.slice(0, 7);
+  r = await json('GET', `/autoavaliacoes/${mesRef}`, null, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.respostas, {});
+  r = await json('PUT', `/autoavaliacoes/${mesRef}`, { respostas: { reativo: true, 'planeja-dia': false } }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  r = await json('PUT', `/autoavaliacoes/${mesRef}`, { respostas: { reativo: false, 'planeja-dia': true } }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.respostas, { reativo: false, 'planeja-dia': true }); // sobrescreveu, não mesclou
+  r = await json('GET', '/autoavaliacoes', null, tokenLider);
+  assert.strictEqual(r.body.length, 1); // upsert no mesmo mês não duplica linha
 
   console.log('→ excluir liderado remove também os registros do diário (cascade)');
   r = await json('DELETE', `/liderados/${liderado.id}`, null, tokenLider);

@@ -34,6 +34,40 @@ router.get('/resumo-equipe', requireAuth, requireLider, async (req, res) => {
   res.json(rows);
 });
 
+// Líder: estatísticas de reuniões/feedbacks pro dashboard — volume recente,
+// acumulado no ano, ranking por liderado e há quantos dias não conversa com ninguém.
+router.get('/estatisticas', requireAuth, requireLider, async (req, res) => {
+  const geral = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE data >= CURRENT_DATE - INTERVAL '7 days') AS ultimos_7_dias,
+       COUNT(*) FILTER (WHERE data >= CURRENT_DATE - INTERVAL '30 days') AS ultimos_30_dias,
+       COUNT(*) FILTER (WHERE EXTRACT(YEAR FROM data) = EXTRACT(YEAR FROM CURRENT_DATE)) AS acumulado_ano,
+       (CURRENT_DATE - MAX(data)) AS dias_sem_reuniao
+     FROM diario_registros
+     WHERE lider_id = $1`,
+    [req.user.id]
+  );
+
+  const porLiderado = await pool.query(
+    `SELECT u.id, u.nome, COUNT(d.id) AS total
+     FROM users u
+     LEFT JOIN diario_registros d ON d.liderado_id = u.id
+     WHERE u.lider_id = $1
+     GROUP BY u.id, u.nome
+     ORDER BY total DESC, u.nome ASC`,
+    [req.user.id]
+  );
+
+  const g = geral.rows[0];
+  res.json({
+    ultimos7Dias: Number(g.ultimos_7_dias),
+    ultimos30Dias: Number(g.ultimos_30_dias),
+    acumuladoAno: Number(g.acumulado_ano),
+    diasSemReuniao: g.dias_sem_reuniao === null ? null : Number(g.dias_sem_reuniao),
+    porLiderado: porLiderado.rows.map(r => ({ id: r.id, nome: r.nome, total: Number(r.total) })),
+  });
+});
+
 // Líder: novo registro (observação ou feedback formal).
 router.post('/', requireAuth, requireLider, async (req, res) => {
   const { liderado_id, tipo, data, riscos, sinais, conversa, plano } = req.body || {};
