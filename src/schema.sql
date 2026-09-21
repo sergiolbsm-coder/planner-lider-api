@@ -156,9 +156,14 @@ CREATE TABLE IF NOT EXISTS arquivos_aula (
   lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   nome TEXT NOT NULL,
   descricao TEXT,
+  pasta TEXT,
   tipo_mime TEXT NOT NULL,
   tamanho_bytes INT NOT NULL,
   conteudo BYTEA NOT NULL,
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- ALTER separado (não só o CREATE acima) porque a tabela já existe em produção
+-- desde antes da coluna "pasta" — CREATE TABLE IF NOT EXISTS não adiciona
+-- coluna em tabela existente.
+ALTER TABLE arquivos_aula ADD COLUMN IF NOT EXISTS pasta TEXT;
 CREATE INDEX IF NOT EXISTS idx_arquivos_aula_lider_id ON arquivos_aula(lider_id);

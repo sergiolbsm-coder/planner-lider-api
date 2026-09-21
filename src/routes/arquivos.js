@@ -8,7 +8,7 @@ const router = express.Router();
 const LIMITE_TAMANHO = 20 * 1024 * 1024; // 20MB — dá pra maioria de PDFs/slides de aula
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: LIMITE_TAMANHO } });
 
-const SELECT_METADADOS = 'id, lider_id, nome, descricao, tipo_mime, tamanho_bytes, criado_em';
+const SELECT_METADADOS = 'id, lider_id, nome, descricao, pasta, tipo_mime, tamanho_bytes, criado_em';
 
 // Líder: lista os arquivos que ele mesmo subiu (sem o conteúdo, só metadados).
 router.get('/', requireAuth, requireLider, async (req, res) => {
@@ -34,14 +34,35 @@ router.post('/', requireAuth, requireLider, upload.single('arquivo'), async (req
   if (!req.file) return res.status(400).json({ erro: 'Selecione um arquivo.' });
   const nome = (req.body.nome || req.file.originalname || 'arquivo').trim();
   const descricao = (req.body.descricao || '').trim() || null;
+  const pasta = (req.body.pasta || '').trim() || null;
 
   const { rows } = await pool.query(
-    `INSERT INTO arquivos_aula (lider_id, nome, descricao, tipo_mime, tamanho_bytes, conteudo)
-     VALUES ($1,$2,$3,$4,$5,$6)
+    `INSERT INTO arquivos_aula (lider_id, nome, descricao, pasta, tipo_mime, tamanho_bytes, conteudo)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      RETURNING ${SELECT_METADADOS}`,
-    [req.user.id, nome, descricao, req.file.mimetype || 'application/octet-stream', req.file.size, req.file.buffer]
+    [req.user.id, nome, descricao, pasta, req.file.mimetype || 'application/octet-stream', req.file.size, req.file.buffer]
   );
   res.status(201).json(rows[0]);
+});
+
+// Líder: renomeia, move de pasta ou edita a descrição (não troca o conteúdo —
+// pra isso é excluir e subir de novo). O front sempre manda os 3 campos
+// juntos, então aqui é um UPDATE direto, sem COALESCE — evita a armadilha de
+// "PUT parcial apaga o que não foi enviado" que já mordeu o dashboard-config.
+router.put('/:id', requireAuth, requireLider, async (req, res) => {
+  const nome = (req.body.nome || '').trim();
+  if (!nome) return res.status(400).json({ erro: 'Dê um nome ao arquivo.' });
+  const descricao = (req.body.descricao || '').trim() || null;
+  const pasta = (req.body.pasta || '').trim() || null;
+
+  const { rows } = await pool.query(
+    `UPDATE arquivos_aula SET nome = $1, descricao = $2, pasta = $3
+     WHERE id = $4 AND lider_id = $5
+     RETURNING ${SELECT_METADADOS}`,
+    [nome, descricao, pasta, req.params.id, req.user.id]
+  );
+  if (!rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+  res.json(rows[0]);
 });
 
 // Líder ou liderado (da mesma turma): baixa o conteúdo do arquivo.

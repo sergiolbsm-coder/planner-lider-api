@@ -185,11 +185,20 @@ async function main() {
   form.append('arquivo', new Blob([conteudoOriginal], { type: 'application/pdf' }), 'aula-01.pdf');
   form.append('nome', 'Aula 01 — Introdução');
   form.append('descricao', 'Slides da primeira aula.');
+  form.append('pasta', 'Módulo 1');
   r = await upload('/arquivos', form, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   assert.strictEqual(r.body.tamanho_bytes, conteudoOriginal.length);
+  assert.strictEqual(r.body.pasta, 'Módulo 1');
   assert.strictEqual('conteudo' in r.body, false); // metadados não trazem o binário junto
   const arquivoId = r.body.id;
+
+  console.log('→ líder move o arquivo pra outra pasta (PUT não apaga o resto por ser parcial)');
+  r = await json('PUT', `/arquivos/${arquivoId}`, { nome: 'Aula 01 — Introdução', descricao: 'Slides da primeira aula.', pasta: 'Módulo 2' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.pasta, 'Módulo 2');
+  r = await json('GET', '/arquivos', null, tokenLider);
+  assert.strictEqual(r.body[0].pasta, 'Módulo 2');
 
   console.log('→ upload sem arquivo é rejeitado');
   const formVazio = new FormData();
