@@ -146,3 +146,19 @@ CREATE TABLE IF NOT EXISTS autoavaliacoes (
   UNIQUE (lider_id, mes_ref)
 );
 CREATE INDEX IF NOT EXISTS idx_autoavaliacoes_lider_id ON autoavaliacoes(lider_id);
+
+-- Arquivos da aula — material que o líder sobe pra turma (liderados) baixar
+-- direto do site, sem precisar do Google Drive (bloqueado por proxy em
+-- algumas empresas). Guardado como bytea no próprio Postgres: o disco do
+-- Render é efêmero (some a cada deploy/restart), o banco não.
+CREATE TABLE IF NOT EXISTS arquivos_aula (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  nome TEXT NOT NULL,
+  descricao TEXT,
+  tipo_mime TEXT NOT NULL,
+  tamanho_bytes INT NOT NULL,
+  conteudo BYTEA NOT NULL,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_arquivos_aula_lider_id ON arquivos_aula(lider_id);

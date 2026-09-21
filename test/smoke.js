@@ -49,6 +49,16 @@ async function main() {
     body: body ? JSON.stringify(body) : undefined,
   }).then(async r => ({ status: r.status, body: await r.json().catch(() => null) }));
 
+  const upload = (url, formData, token) => fetch(base + url, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  }).then(async r => ({ status: r.status, body: await r.json().catch(() => null) }));
+
+  const download = (url, token) => fetch(base + url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  }).then(async r => ({ status: r.status, buffer: Buffer.from(await r.arrayBuffer()), headers: r.headers }));
+
   console.log('→ health check');
   let r = await json('GET', '/health');
   assert.strictEqual(r.status, 200);
@@ -168,6 +178,49 @@ async function main() {
   assert.deepStrictEqual(r.body.respostas, { reativo: false, 'planeja-dia': true }); // sobrescreveu, não mesclou
   r = await json('GET', '/autoavaliacoes', null, tokenLider);
   assert.strictEqual(r.body.length, 1); // upsert no mesmo mês não duplica linha
+
+  console.log('→ líder sobe um arquivo de aula (multipart)');
+  const conteudoOriginal = Buffer.from('%PDF-1.4 conteúdo de mentira só pro teste');
+  const form = new FormData();
+  form.append('arquivo', new Blob([conteudoOriginal], { type: 'application/pdf' }), 'aula-01.pdf');
+  form.append('nome', 'Aula 01 — Introdução');
+  form.append('descricao', 'Slides da primeira aula.');
+  r = await upload('/arquivos', form, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.tamanho_bytes, conteudoOriginal.length);
+  assert.strictEqual('conteudo' in r.body, false); // metadados não trazem o binário junto
+  const arquivoId = r.body.id;
+
+  console.log('→ upload sem arquivo é rejeitado');
+  const formVazio = new FormData();
+  formVazio.append('nome', 'Sem arquivo');
+  r = await upload('/arquivos', formVazio, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ liderado enxerga o arquivo da turma (metadados) e consegue baixar o conteúdo original');
+  r = await json('GET', '/arquivos/minha-turma', null, tokenLiderado);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.length, 1);
+  assert.strictEqual(r.body[0].nome, 'Aula 01 — Introdução');
+
+  let baixado = await download(`/arquivos/${arquivoId}/download`, tokenLiderado);
+  assert.strictEqual(baixado.status, 200);
+  assert.ok(baixado.buffer.equals(conteudoOriginal), 'conteúdo baixado deve ser idêntico ao enviado');
+  assert.strictEqual(baixado.headers.get('content-type'), 'application/pdf');
+
+  console.log('→ liderado de outro líder não consegue baixar o arquivo (404, não vaza existência)');
+  const outroLider = await json('POST', '/auth/registrar-lider', { nome: 'Outra Líder', email: 'outra@teste.com', senha: '123456' });
+  const outroLiderTokenTmp = outroLider.body.token;
+  const outroLiderado = await json('POST', '/liderados', { nome: 'Fulano', email: 'fulano@teste.com', senha: '123456' }, outroLiderTokenTmp);
+  const loginOutroLiderado = await json('POST', '/auth/login', { email: 'fulano@teste.com', senha: '123456' });
+  baixado = await download(`/arquivos/${arquivoId}/download`, loginOutroLiderado.body.token);
+  assert.strictEqual(baixado.status, 404);
+
+  console.log('→ líder exclui o arquivo e ele some da lista');
+  r = await json('DELETE', `/arquivos/${arquivoId}`, null, tokenLider);
+  assert.strictEqual(r.status, 204);
+  r = await json('GET', '/arquivos', null, tokenLider);
+  assert.strictEqual(r.body.length, 0);
 
   console.log('→ excluir liderado remove também os registros do diário (cascade)');
   r = await json('DELETE', `/liderados/${liderado.id}`, null, tokenLider);
