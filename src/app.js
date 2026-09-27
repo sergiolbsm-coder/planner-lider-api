@@ -36,6 +36,8 @@ app.use('/dashboard-config', require('./routes/dashboardConfig'));
 app.use('/autoavaliacoes', require('./routes/autoavaliacoes'));
 app.use('/arquivos', require('./routes/arquivos'));
 app.use('/desafios', require('./routes/desafios'));
+app.use('/plano-gestao', require('./routes/planoGestao'));
+app.use('/diagnostico', require('./routes/diagnostico'));
 
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
 

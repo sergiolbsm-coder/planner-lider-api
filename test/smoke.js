@@ -231,23 +231,52 @@ async function main() {
   r = await json('GET', '/arquivos', null, tokenLider);
   assert.strictEqual(r.body.length, 0);
 
-  console.log('→ desafios: criar item na trilha');
-  r = await json('POST', '/desafios', { titulo: 'Montar minha equipe', descricao: 'Cadastrar liderados.', secaoAlvo: 'liderados', ordem: 0 }, tokenLider);
+  console.log('→ desafios: criar item na trilha, com prazo e pontuação');
+  r = await json('POST', '/desafios', { titulo: 'Montar minha equipe', descricao: 'Cadastrar liderados.', secaoAlvo: 'liderados', prazo: '2099-01-01', pontos: 20, ordem: 0 }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const desafioId = r.body.id;
   assert.strictEqual(r.body.concluido, false);
+  assert.strictEqual(r.body.pontos, 20);
+  assert.strictEqual(r.body.concluido_em, null);
 
-  console.log('→ desafios: marcar como concluído não pode apagar título/descrição (PUT parcial)');
+  console.log('→ desafios: criar sem pontos definidos usa o padrão (10)');
+  r = await json('POST', '/desafios', { titulo: 'Item sem pontuação explícita' }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.pontos, 10);
+  const desafioSemPontosId = r.body.id;
+
+  console.log('→ desafios: marcar como concluído não pode apagar título/descrição (PUT parcial) e grava concluido_em');
   r = await json('PUT', `/desafios/${desafioId}`, { concluido: true }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.concluido, true);
   assert.strictEqual(r.body.titulo, 'Montar minha equipe'); // <- não pode ter sido apagado
+  assert.ok(r.body.concluido_em, 'concluido_em deveria ter sido preenchido ao marcar concluído');
 
-  console.log('→ desafios: editar o texto não pode desmarcar o "concluído" já salvo');
+  console.log('→ desafios: editar o texto não pode desmarcar o "concluído" nem apagar concluido_em já salvos');
   r = await json('PUT', `/desafios/${desafioId}`, { titulo: 'Montar e conhecer minha equipe' }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.titulo, 'Montar e conhecer minha equipe');
   assert.strictEqual(r.body.concluido, true); // <- idem, não pode ter voltado a false
+  assert.ok(r.body.concluido_em, 'concluido_em não pode ter sido apagado por um PUT que só mudou o título');
+
+  console.log('→ desafios: desmarcar como pendente limpa concluido_em');
+  r = await json('PUT', `/desafios/${desafioId}`, { concluido: false }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.concluido, false);
+  assert.strictEqual(r.body.concluido_em, null);
+
+  console.log('→ desafios: limpar prazo/seção explicitamente (null) funciona, mas omitir o campo preserva o valor');
+  r = await json('PUT', `/desafios/${desafioId}`, { ordem: 5 }, tokenLider); // não manda prazo/secaoAlvo
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.prazo, 'prazo não pode ter sido apagado por um PUT que não mencionou o campo');
+  assert.strictEqual(r.body.secao_alvo, 'liderados'); // idem
+  r = await json('PUT', `/desafios/${desafioId}`, { prazo: null, secaoAlvo: null }, tokenLider); // agora limpa de propósito
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.prazo, null);
+  assert.strictEqual(r.body.secao_alvo, null);
+
+  r = await json('DELETE', `/desafios/${desafioSemPontosId}`, null, tokenLider);
+  assert.strictEqual(r.status, 204);
 
   console.log('→ desafios: liderado não acessa a rota (é só do líder) e outro líder não edita a trilha alheia');
   r = await json('GET', '/desafios', null, tokenLiderado);
@@ -260,6 +289,39 @@ async function main() {
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/desafios', null, tokenLider);
   assert.strictEqual(r.body.length, 0);
+
+  console.log('→ plano de gestão: leitura antes de salvar vem vazia, sem criar linha');
+  r = await json('GET', '/plano-gestao', null, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.visao_missao, '');
+
+  console.log('→ plano de gestão: salvar só a visão não pode apagar o lema salvo depois (PUT parcial)');
+  r = await json('PUT', '/plano-gestao', { visaoMissao: 'Ser referência em excelência operacional.' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  r = await json('PUT', '/plano-gestao', { lemaDoAno: 'Simplificar para crescer' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.lema_do_ano, 'Simplificar para crescer');
+  assert.strictEqual(r.body.visao_missao, 'Ser referência em excelência operacional.'); // <- não pode ter sido apagada
+
+  console.log('→ diagnóstico: brainstorm de desafios e oportunidades');
+  r = await json('POST', '/diagnostico', { tipo: 'desafio', texto: 'Alta rotatividade no turno da noite' }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const diagnosticoId = r.body.id;
+  r = await json('POST', '/diagnostico', { tipo: 'oportunidade', texto: 'Automatizar o relatório semanal' }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  r = await json('POST', '/diagnostico', { tipo: 'invalido', texto: 'x' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+  r = await json('GET', '/diagnostico', null, tokenLider);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.length, 2);
+
+  console.log('→ diagnóstico: editar o texto e excluir um item');
+  r = await json('PUT', `/diagnostico/${diagnosticoId}`, { texto: 'Alta rotatividade no turno da noite — priorizar' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  r = await json('DELETE', `/diagnostico/${diagnosticoId}`, null, tokenLider);
+  assert.strictEqual(r.status, 204);
+  r = await json('GET', '/diagnostico', null, tokenLider);
+  assert.strictEqual(r.body.length, 1);
 
   console.log('→ excluir liderado remove também os registros do diário (cascade)');
   r = await json('DELETE', `/liderados/${liderado.id}`, null, tokenLider);

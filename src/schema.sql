@@ -150,17 +150,55 @@ CREATE INDEX IF NOT EXISTS idx_autoavaliacoes_lider_id ON autoavaliacoes(lider_i
 -- Desafios do líder — trilha de passo a passo (checklist) que o próprio líder
 -- parametriza: a seed inicial vem com itens padrão (ver desafiosPadrao() no
 -- frontend), mas o líder pode adicionar, editar, reordenar e remover livremente.
+-- prazo/pontos/concluido_em existem pra dar pontuação por entrega no prazo:
+-- concluir até "prazo" vale "pontos", concluir depois disso vale 0 (mas conta
+-- como concluído do mesmo jeito na trilha).
 CREATE TABLE IF NOT EXISTS desafios_itens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   titulo TEXT NOT NULL,
   descricao TEXT,
   secao_alvo TEXT,
+  prazo DATE,
+  pontos INT NOT NULL DEFAULT 10,
   concluido BOOLEAN NOT NULL DEFAULT false,
+  concluido_em TIMESTAMPTZ,
   ordem INT NOT NULL DEFAULT 0,
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- ALTERs separados porque desafios_itens ainda não tinha essas colunas nas
+-- versões anteriores do schema (mesmo motivo do ALTER de arquivos_aula.pasta).
+ALTER TABLE desafios_itens ADD COLUMN IF NOT EXISTS prazo DATE;
+ALTER TABLE desafios_itens ADD COLUMN IF NOT EXISTS pontos INT NOT NULL DEFAULT 10;
+ALTER TABLE desafios_itens ADD COLUMN IF NOT EXISTS concluido_em TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_desafios_itens_lider_id ON desafios_itens(lider_id);
+
+-- Plano de Gestão do líder — "Passo 1: Criação do Plano" do material oficial
+-- (expectativas do ano, visão/missão, pontos fortes da equipe, metas do ano,
+-- lema e combinados). Uma linha por líder, editável e reapresentável à equipe.
+CREATE TABLE IF NOT EXISTS plano_gestao (
+  lider_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  expectativas_ano TEXT,
+  pontos_fortes_equipe TEXT,
+  visao_missao TEXT,
+  meta_desempenho TEXT,
+  meta_processos TEXT,
+  lema_do_ano TEXT,
+  combinados TEXT,
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Diagnóstico — brainstorm de Desafios e Oportunidades da equipe/área (2
+-- colunas do material oficial), lista livre por líder.
+CREATE TABLE IF NOT EXISTS diagnostico_itens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL CHECK (tipo IN ('desafio', 'oportunidade')),
+  texto TEXT NOT NULL,
+  ordem INT NOT NULL DEFAULT 0,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_diagnostico_itens_lider_id ON diagnostico_itens(lider_id);
 
 -- Arquivos da aula — material que o líder sobe pra turma (liderados) baixar
 -- direto do site, sem precisar do Google Drive (bloqueado por proxy em
