@@ -3,20 +3,37 @@
 -- ============================================================
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Usuários: líderes e liderados compartilham a mesma tabela de login.
--- Um liderado sempre tem lider_id apontando pro líder dono do quadro.
+-- Turmas — cada turma é um grupo de líderes conduzido pelo administrador do
+-- Instituto, com sua própria trilha de Desafios (ver desafios_itens abaixo).
+CREATE TABLE IF NOT EXISTS turmas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome TEXT NOT NULL,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Usuários: administrador, líderes e liderados compartilham a mesma tabela de
+-- login. Um liderado sempre tem lider_id apontando pro líder dono do quadro;
+-- um líder sempre tem turma_id apontando pra turma que o administrador
+-- cadastrou ele (admin e liderado não usam turma_id).
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  role TEXT NOT NULL CHECK (role IN ('lider', 'liderado')),
+  role TEXT NOT NULL CHECK (role IN ('admin', 'lider', 'liderado')),
   nome TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   senha_hash TEXT NOT NULL,
   lider_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  turma_id UUID REFERENCES turmas(id) ON DELETE SET NULL,
   area TEXT,
   cargo TEXT,
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_users_lider_id ON users(lider_id);
+CREATE INDEX IF NOT EXISTS idx_users_turma_id ON users(turma_id);
+-- ALTERs separados porque "users" já existe em produção desde antes do papel
+-- de administrador e da turma_id (mesmo motivo do ALTER de arquivos_aula.pasta).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS turma_id UUID REFERENCES turmas(id) ON DELETE SET NULL;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'lider', 'liderado'));
 
 -- Perfil estendido do liderado — bloco "Conhecer o Liderado" do Diário de Bordo.
 CREATE TABLE IF NOT EXISTS perfis_liderado (
@@ -147,31 +164,36 @@ CREATE TABLE IF NOT EXISTS autoavaliacoes (
 );
 CREATE INDEX IF NOT EXISTS idx_autoavaliacoes_lider_id ON autoavaliacoes(lider_id);
 
--- Desafios do líder — trilha de passo a passo (checklist) que o próprio líder
--- parametriza: a seed inicial vem com itens padrão (ver desafiosPadrao() no
--- frontend), mas o líder pode adicionar, editar, reordenar e remover livremente.
--- prazo/pontos/concluido_em existem pra dar pontuação por entrega no prazo:
--- concluir até "prazo" vale "pontos", concluir depois disso vale 0 (mas conta
--- como concluído do mesmo jeito na trilha).
+-- Desafios — trilha de passo a passo (checklist) de uma turma inteira.
+-- É o TEMPLATE: título, descrição, seção-alvo, prazo e pontos, parametrizado
+-- só pelo administrador (todo líder da turma segue a mesma trilha). O
+-- progresso de cada líder fica em desafios_progresso, separado — "concluir no
+-- prazo" é individual, a definição do desafio não é.
 CREATE TABLE IF NOT EXISTS desafios_itens (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  turma_id UUID NOT NULL REFERENCES turmas(id) ON DELETE CASCADE,
   titulo TEXT NOT NULL,
   descricao TEXT,
   secao_alvo TEXT,
   prazo DATE,
   pontos INT NOT NULL DEFAULT 10,
-  concluido BOOLEAN NOT NULL DEFAULT false,
-  concluido_em TIMESTAMPTZ,
   ordem INT NOT NULL DEFAULT 0,
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- ALTERs separados porque desafios_itens ainda não tinha essas colunas nas
--- versões anteriores do schema (mesmo motivo do ALTER de arquivos_aula.pasta).
-ALTER TABLE desafios_itens ADD COLUMN IF NOT EXISTS prazo DATE;
-ALTER TABLE desafios_itens ADD COLUMN IF NOT EXISTS pontos INT NOT NULL DEFAULT 10;
-ALTER TABLE desafios_itens ADD COLUMN IF NOT EXISTS concluido_em TIMESTAMPTZ;
-CREATE INDEX IF NOT EXISTS idx_desafios_itens_lider_id ON desafios_itens(lider_id);
+CREATE INDEX IF NOT EXISTS idx_desafios_itens_turma_id ON desafios_itens(turma_id);
+
+-- Progresso individual de cada líder em cada desafio da trilha da sua turma.
+-- Concluir até o "prazo" do desafio vale os pontos; depois disso vale 0 — mas
+-- calculado no momento da leitura (não gravado aqui), pra não perder a conta
+-- se o admin mudar o prazo do desafio depois.
+CREATE TABLE IF NOT EXISTS desafios_progresso (
+  desafio_id UUID NOT NULL REFERENCES desafios_itens(id) ON DELETE CASCADE,
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  concluido BOOLEAN NOT NULL DEFAULT false,
+  concluido_em TIMESTAMPTZ,
+  PRIMARY KEY (desafio_id, lider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_desafios_progresso_lider_id ON desafios_progresso(lider_id);
 
 -- Plano de Gestão do líder — "Passo 1: Criação do Plano" do material oficial
 -- (expectativas do ano, visão/missão, pontos fortes da equipe, metas do ano,
@@ -200,13 +222,13 @@ CREATE TABLE IF NOT EXISTS diagnostico_itens (
 );
 CREATE INDEX IF NOT EXISTS idx_diagnostico_itens_lider_id ON diagnostico_itens(lider_id);
 
--- Arquivos da aula — material que o líder sobe pra turma (liderados) baixar
--- direto do site, sem precisar do Google Drive (bloqueado por proxy em
--- algumas empresas). Guardado como bytea no próprio Postgres: o disco do
--- Render é efêmero (some a cada deploy/restart), o banco não.
+-- Arquivos da aula — material que o administrador sobe pra turma (todo líder
+-- dela baixa direto do site, sem precisar do Google Drive, que às vezes o
+-- proxy da empresa bloqueia). Guardado como bytea no próprio Postgres: o
+-- disco do Render é efêmero (some a cada deploy/restart), o banco não.
 CREATE TABLE IF NOT EXISTS arquivos_aula (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  turma_id UUID NOT NULL REFERENCES turmas(id) ON DELETE CASCADE,
   nome TEXT NOT NULL,
   descricao TEXT,
   pasta TEXT,
@@ -215,8 +237,4 @@ CREATE TABLE IF NOT EXISTS arquivos_aula (
   conteudo BYTEA NOT NULL,
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- ALTER separado (não só o CREATE acima) porque a tabela já existe em produção
--- desde antes da coluna "pasta" — CREATE TABLE IF NOT EXISTS não adiciona
--- coluna em tabela existente.
-ALTER TABLE arquivos_aula ADD COLUMN IF NOT EXISTS pasta TEXT;
-CREATE INDEX IF NOT EXISTS idx_arquivos_aula_lider_id ON arquivos_aula(lider_id);
+CREATE INDEX IF NOT EXISTS idx_arquivos_aula_turma_id ON arquivos_aula(turma_id);

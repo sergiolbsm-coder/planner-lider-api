@@ -9,7 +9,7 @@ function assinarToken(user) {
   // liderId: o próprio id (se líder) ou o id do líder dono do quadro (se liderado).
   const liderId = user.role === 'lider' ? user.id : user.lider_id;
   return jwt.sign(
-    { id: user.id, role: user.role, liderId, nome: user.nome },
+    { id: user.id, role: user.role, liderId, turmaId: user.turma_id || null, nome: user.nome },
     JWT_SECRET,
     { expiresIn: '30d' }
   );
@@ -35,4 +35,11 @@ function requireLider(req, res, next) {
   next();
 }
 
-module.exports = { assinarToken, requireAuth, requireLider };
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ erro: 'Apenas o administrador pode fazer isso.' });
+  }
+  next();
+}
+
+module.exports = { assinarToken, requireAuth, requireLider, requireAdmin };

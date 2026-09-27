@@ -1,76 +1,36 @@
 const express = require('express');
-const multer = require('multer');
 const { pool } = require('../db');
-const { requireAuth, requireLider } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-const LIMITE_TAMANHO = 20 * 1024 * 1024; // 20MB — dá pra maioria de PDFs/slides de aula
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: LIMITE_TAMANHO } });
+const SELECT_METADADOS = 'a.id, a.turma_id, a.nome, a.descricao, a.pasta, a.tipo_mime, a.tamanho_bytes, a.criado_em';
 
-const SELECT_METADADOS = 'id, lider_id, nome, descricao, pasta, tipo_mime, tamanho_bytes, criado_em';
+// Upload/edição/exclusão agora são só do administrador, por turma — ver
+// src/routes/admin.js. Aqui líder e liderado só leem os arquivos da turma do
+// seu líder: req.user.liderId resolve pro próprio id (se for líder) ou pro id
+// do líder dele (se for liderado) — por isso a mesma query serve os dois papéis.
+const LISTAR = `
+  SELECT ${SELECT_METADADOS} FROM arquivos_aula a
+  JOIN users lider ON lider.id = $1 AND lider.turma_id = a.turma_id
+  ORDER BY a.criado_em DESC
+`;
 
-// Líder: lista os arquivos que ele mesmo subiu (sem o conteúdo, só metadados).
-router.get('/', requireAuth, requireLider, async (req, res) => {
-  const { rows } = await pool.query(
-    `SELECT ${SELECT_METADADOS} FROM arquivos_aula WHERE lider_id = $1 ORDER BY criado_em DESC`,
-    [req.user.id]
-  );
+router.get('/', requireAuth, async (req, res) => {
+  const { rows } = await pool.query(LISTAR, [req.user.liderId]);
   res.json(rows);
 });
 
-// Liderado: lista os arquivos que o próprio líder disponibilizou pra turma.
 router.get('/minha-turma', requireAuth, async (req, res) => {
-  if (req.user.role !== 'liderado') return res.status(403).json({ erro: 'Apenas contas de liderado usam esta rota.' });
-  const { rows } = await pool.query(
-    `SELECT ${SELECT_METADADOS} FROM arquivos_aula WHERE lider_id = $1 ORDER BY criado_em DESC`,
-    [req.user.liderId]
-  );
+  const { rows } = await pool.query(LISTAR, [req.user.liderId]);
   res.json(rows);
 });
 
-// Líder: sobe um arquivo (multipart/form-data, campo "arquivo").
-router.post('/', requireAuth, requireLider, upload.single('arquivo'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ erro: 'Selecione um arquivo.' });
-  const nome = (req.body.nome || req.file.originalname || 'arquivo').trim();
-  const descricao = (req.body.descricao || '').trim() || null;
-  const pasta = (req.body.pasta || '').trim() || null;
-
-  const { rows } = await pool.query(
-    `INSERT INTO arquivos_aula (lider_id, nome, descricao, pasta, tipo_mime, tamanho_bytes, conteudo)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
-     RETURNING ${SELECT_METADADOS}`,
-    [req.user.id, nome, descricao, pasta, req.file.mimetype || 'application/octet-stream', req.file.size, req.file.buffer]
-  );
-  res.status(201).json(rows[0]);
-});
-
-// Líder: renomeia, move de pasta ou edita a descrição (não troca o conteúdo —
-// pra isso é excluir e subir de novo). O front sempre manda os 3 campos
-// juntos, então aqui é um UPDATE direto, sem COALESCE — evita a armadilha de
-// "PUT parcial apaga o que não foi enviado" que já mordeu o dashboard-config.
-router.put('/:id', requireAuth, requireLider, async (req, res) => {
-  const nome = (req.body.nome || '').trim();
-  if (!nome) return res.status(400).json({ erro: 'Dê um nome ao arquivo.' });
-  const descricao = (req.body.descricao || '').trim() || null;
-  const pasta = (req.body.pasta || '').trim() || null;
-
-  const { rows } = await pool.query(
-    `UPDATE arquivos_aula SET nome = $1, descricao = $2, pasta = $3
-     WHERE id = $4 AND lider_id = $5
-     RETURNING ${SELECT_METADADOS}`,
-    [nome, descricao, pasta, req.params.id, req.user.id]
-  );
-  if (!rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
-  res.json(rows[0]);
-});
-
-// Líder ou liderado (da mesma turma): baixa o conteúdo do arquivo.
-// req.user.liderId já resolve pro id certo nos dois papéis (o próprio, se for
-// líder; o do seu líder, se for liderado) — por isso a checagem é uma só.
 router.get('/:id/download', requireAuth, async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT nome, tipo_mime, conteudo FROM arquivos_aula WHERE id = $1 AND lider_id = $2',
+    `SELECT a.nome, a.tipo_mime, a.conteudo FROM arquivos_aula a
+     JOIN users lider ON lider.id = $2 AND lider.turma_id = a.turma_id
+     WHERE a.id = $1`,
     [req.params.id, req.user.liderId]
   );
   if (!rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
@@ -79,21 +39,6 @@ router.get('/:id/download', requireAuth, async (req, res) => {
   res.setHeader('Content-Type', arquivo.tipo_mime);
   res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(arquivo.nome)}"`);
   res.send(arquivo.conteudo);
-});
-
-router.delete('/:id', requireAuth, requireLider, async (req, res) => {
-  const { rowCount } = await pool.query('DELETE FROM arquivos_aula WHERE id = $1 AND lider_id = $2', [req.params.id, req.user.id]);
-  if (!rowCount) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
-  res.status(204).end();
-});
-
-// Erros do multer (ex: arquivo grande demais) viram JSON, não o handler de erro genérico do HTML.
-router.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Arquivo maior que o limite de 20MB.' : err.message;
-    return res.status(400).json({ erro: msg });
-  }
-  next(err);
 });
 
 module.exports = router;

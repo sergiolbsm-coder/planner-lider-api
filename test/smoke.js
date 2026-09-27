@@ -63,14 +63,28 @@ async function main() {
   let r = await json('GET', '/health');
   assert.strictEqual(r.status, 200);
 
-  console.log('→ registrar líder');
-  r = await json('POST', '/auth/registrar-lider', { nome: 'Carla Mendes', email: 'carla@teste.com', senha: '123456', area: 'Operações' });
+  console.log('→ bootstrap do administrador (só funciona uma vez)');
+  r = await json('POST', '/auth/bootstrap-admin', { nome: 'Admin do Instituto', email: 'admin@teste.com', senha: '123456' });
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
-  const tokenLider = r.body.token;
+  const tokenAdmin = r.body.token;
+  r = await json('POST', '/auth/bootstrap-admin', { nome: 'Outro Admin', email: 'outroadmin@teste.com', senha: '123456' });
+  assert.strictEqual(r.status, 403, JSON.stringify(r.body)); // já existe um admin — não deixa criar outro
+
+  console.log('→ admin cria uma turma e um líder dentro dela');
+  r = await json('POST', '/admin/turmas', { nome: 'Turma 2026.1' }, tokenAdmin);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const turmaId = r.body.id;
+  r = await json('POST', `/admin/turmas/${turmaId}/lideres`, { nome: 'Carla Mendes', email: 'carla@teste.com', senha: '123456', area: 'Operações' }, tokenAdmin);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
 
   console.log('→ login líder');
   r = await json('POST', '/auth/login', { email: 'carla@teste.com', senha: '123456' });
   assert.strictEqual(r.status, 200);
+  const tokenLider = r.body.token;
+
+  console.log('→ líder não acessa rotas de admin');
+  r = await json('POST', '/admin/turmas', { nome: 'Outra Turma' }, tokenLider);
+  assert.strictEqual(r.status, 403);
 
   console.log('→ login com senha errada deve falhar');
   r = await json('POST', '/auth/login', { email: 'carla@teste.com', senha: 'errada' });
@@ -179,22 +193,28 @@ async function main() {
   r = await json('GET', '/autoavaliacoes', null, tokenLider);
   assert.strictEqual(r.body.length, 1); // upsert no mesmo mês não duplica linha
 
-  console.log('→ líder sobe um arquivo de aula (multipart)');
+  console.log('→ admin sobe um arquivo de aula pra turma (multipart)');
   const conteudoOriginal = Buffer.from('%PDF-1.4 conteúdo de mentira só pro teste');
   const form = new FormData();
   form.append('arquivo', new Blob([conteudoOriginal], { type: 'application/pdf' }), 'aula-01.pdf');
   form.append('nome', 'Aula 01 — Introdução');
   form.append('descricao', 'Slides da primeira aula.');
   form.append('pasta', 'Módulo 1');
-  r = await upload('/arquivos', form, tokenLider);
+  r = await upload(`/admin/turmas/${turmaId}/arquivos`, form, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   assert.strictEqual(r.body.tamanho_bytes, conteudoOriginal.length);
   assert.strictEqual(r.body.pasta, 'Módulo 1');
   assert.strictEqual('conteudo' in r.body, false); // metadados não trazem o binário junto
   const arquivoId = r.body.id;
 
-  console.log('→ líder move o arquivo pra outra pasta (PUT não apaga o resto por ser parcial)');
-  r = await json('PUT', `/arquivos/${arquivoId}`, { nome: 'Aula 01 — Introdução', descricao: 'Slides da primeira aula.', pasta: 'Módulo 2' }, tokenLider);
+  console.log('→ líder não pode subir/editar/excluir arquivos — só ler e baixar');
+  r = await upload(`/admin/turmas/${turmaId}/arquivos`, form, tokenLider);
+  assert.strictEqual(r.status, 403);
+  r = await json('PUT', `/admin/arquivos/${arquivoId}`, { nome: 'x' }, tokenLider);
+  assert.strictEqual(r.status, 403);
+
+  console.log('→ admin move o arquivo pra outra pasta (PUT não apaga o resto por ser parcial)');
+  r = await json('PUT', `/admin/arquivos/${arquivoId}`, { nome: 'Aula 01 — Introdução', descricao: 'Slides da primeira aula.', pasta: 'Módulo 2' }, tokenAdmin);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.pasta, 'Módulo 2');
   r = await json('GET', '/arquivos', null, tokenLider);
@@ -203,10 +223,10 @@ async function main() {
   console.log('→ upload sem arquivo é rejeitado');
   const formVazio = new FormData();
   formVazio.append('nome', 'Sem arquivo');
-  r = await upload('/arquivos', formVazio, tokenLider);
+  r = await upload(`/admin/turmas/${turmaId}/arquivos`, formVazio, tokenAdmin);
   assert.strictEqual(r.status, 400);
 
-  console.log('→ liderado enxerga o arquivo da turma (metadados) e consegue baixar o conteúdo original');
+  console.log('→ liderado enxerga o arquivo da turma do seu líder (metadados) e consegue baixar o conteúdo original');
   r = await json('GET', '/arquivos/minha-turma', null, tokenLiderado);
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.length, 1);
@@ -217,78 +237,99 @@ async function main() {
   assert.ok(baixado.buffer.equals(conteudoOriginal), 'conteúdo baixado deve ser idêntico ao enviado');
   assert.strictEqual(baixado.headers.get('content-type'), 'application/pdf');
 
-  console.log('→ liderado de outro líder não consegue baixar o arquivo (404, não vaza existência)');
-  const outroLider = await json('POST', '/auth/registrar-lider', { nome: 'Outra Líder', email: 'outra@teste.com', senha: '123456' });
-  const outroLiderTokenTmp = outroLider.body.token;
+  console.log('→ liderado de outra turma não consegue baixar o arquivo (404, não vaza existência)');
+  const outraTurma = await json('POST', '/admin/turmas', { nome: 'Turma 2026.2' }, tokenAdmin);
+  const outroLider = await json('POST', `/admin/turmas/${outraTurma.body.id}/lideres`, { nome: 'Outra Líder', email: 'outra@teste.com', senha: '123456' }, tokenAdmin);
+  const loginOutroLider = await json('POST', '/auth/login', { email: 'outra@teste.com', senha: '123456' });
+  const outroLiderTokenTmp = loginOutroLider.body.token;
   const outroLiderado = await json('POST', '/liderados', { nome: 'Fulano', email: 'fulano@teste.com', senha: '123456' }, outroLiderTokenTmp);
   const loginOutroLiderado = await json('POST', '/auth/login', { email: 'fulano@teste.com', senha: '123456' });
   baixado = await download(`/arquivos/${arquivoId}/download`, loginOutroLiderado.body.token);
   assert.strictEqual(baixado.status, 404);
+  r = await json('GET', '/arquivos', null, outroLiderTokenTmp);
+  assert.strictEqual(r.body.length, 0); // trilha/arquivos da outra turma estão vazios pra esse líder
 
-  console.log('→ líder exclui o arquivo e ele some da lista');
-  r = await json('DELETE', `/arquivos/${arquivoId}`, null, tokenLider);
+  console.log('→ admin exclui o arquivo e ele some da lista');
+  r = await json('DELETE', `/admin/arquivos/${arquivoId}`, null, tokenAdmin);
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/arquivos', null, tokenLider);
   assert.strictEqual(r.body.length, 0);
 
-  console.log('→ desafios: criar item na trilha, com prazo e pontuação');
-  r = await json('POST', '/desafios', { titulo: 'Montar minha equipe', descricao: 'Cadastrar liderados.', secaoAlvo: 'liderados', prazo: '2099-01-01', pontos: 20, ordem: 0 }, tokenLider);
+  console.log('→ admin monta a trilha de desafios da turma (título/prazo/pontos)');
+  r = await json('POST', `/admin/turmas/${turmaId}/desafios`, { titulo: 'Montar minha equipe', descricao: 'Cadastrar liderados.', secaoAlvo: 'liderados', prazo: '2099-01-01', pontos: 20, ordem: 0 }, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const desafioId = r.body.id;
-  assert.strictEqual(r.body.concluido, false);
   assert.strictEqual(r.body.pontos, 20);
-  assert.strictEqual(r.body.concluido_em, null);
 
-  console.log('→ desafios: criar sem pontos definidos usa o padrão (10)');
-  r = await json('POST', '/desafios', { titulo: 'Item sem pontuação explícita' }, tokenLider);
+  console.log('→ líder não pode criar, editar nem excluir desafios — só o admin parametriza a trilha');
+  r = await json('POST', `/admin/turmas/${turmaId}/desafios`, { titulo: 'Tentativa de líder' }, tokenLider);
+  assert.strictEqual(r.status, 403);
+  r = await json('PUT', `/admin/desafios/${desafioId}`, { titulo: 'x' }, tokenLider);
+  assert.strictEqual(r.status, 403);
+  r = await json('DELETE', `/admin/desafios/${desafioId}`, null, tokenLider);
+  assert.strictEqual(r.status, 403);
+
+  console.log('→ item criado sem pontos definidos usa o padrão (10)');
+  r = await json('POST', `/admin/turmas/${turmaId}/desafios`, { titulo: 'Item sem pontuação explícita' }, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   assert.strictEqual(r.body.pontos, 10);
   const desafioSemPontosId = r.body.id;
 
-  console.log('→ desafios: marcar como concluído não pode apagar título/descrição (PUT parcial) e grava concluido_em');
+  console.log('→ líder lê a trilha da própria turma, ainda sem progresso');
+  r = await json('GET', '/desafios', null, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.length, 2);
+  assert.strictEqual(r.body[0].concluido, false);
+  assert.strictEqual(r.body[0].concluido_em, null);
+
+  console.log('→ líder marca um desafio como concluído — grava progresso individual, não mexe na trilha');
   r = await json('PUT', `/desafios/${desafioId}`, { concluido: true }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.concluido, true);
-  assert.strictEqual(r.body.titulo, 'Montar minha equipe'); // <- não pode ter sido apagado
   assert.ok(r.body.concluido_em, 'concluido_em deveria ter sido preenchido ao marcar concluído');
+  r = await json('GET', '/desafios', null, tokenLider);
+  assert.strictEqual(r.body.find(d => d.id === desafioId).concluido, true);
+  assert.strictEqual(r.body.find(d => d.id === desafioSemPontosId).concluido, false); // o outro item continua pendente
 
-  console.log('→ desafios: editar o texto não pode desmarcar o "concluído" nem apagar concluido_em já salvos');
-  r = await json('PUT', `/desafios/${desafioId}`, { titulo: 'Montar e conhecer minha equipe' }, tokenLider);
-  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-  assert.strictEqual(r.body.titulo, 'Montar e conhecer minha equipe');
-  assert.strictEqual(r.body.concluido, true); // <- idem, não pode ter voltado a false
-  assert.ok(r.body.concluido_em, 'concluido_em não pode ter sido apagado por um PUT que só mudou o título');
-
-  console.log('→ desafios: desmarcar como pendente limpa concluido_em');
+  console.log('→ desmarcar como pendente limpa concluido_em');
   r = await json('PUT', `/desafios/${desafioId}`, { concluido: false }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.concluido, false);
   assert.strictEqual(r.body.concluido_em, null);
 
-  console.log('→ desafios: limpar prazo/seção explicitamente (null) funciona, mas omitir o campo preserva o valor');
-  r = await json('PUT', `/desafios/${desafioId}`, { ordem: 5 }, tokenLider); // não manda prazo/secaoAlvo
+  console.log('→ admin edita texto sem precisar reenviar prazo/seção (PUT parcial via COALESCE)');
+  r = await json('PUT', `/admin/desafios/${desafioId}`, { titulo: 'Montar e conhecer minha equipe' }, tokenAdmin);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.titulo, 'Montar e conhecer minha equipe');
   assert.ok(r.body.prazo, 'prazo não pode ter sido apagado por um PUT que não mencionou o campo');
   assert.strictEqual(r.body.secao_alvo, 'liderados'); // idem
-  r = await json('PUT', `/desafios/${desafioId}`, { prazo: null, secaoAlvo: null }, tokenLider); // agora limpa de propósito
+
+  console.log('→ admin limpa prazo/seção explicitamente (null é um valor válido, não "campo omitido")');
+  r = await json('PUT', `/admin/desafios/${desafioId}`, { prazo: null, secaoAlvo: null }, tokenAdmin);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.prazo, null);
   assert.strictEqual(r.body.secao_alvo, null);
 
-  r = await json('DELETE', `/desafios/${desafioSemPontosId}`, null, tokenLider);
-  assert.strictEqual(r.status, 204);
+  console.log('→ líder de outra turma não vê nem consegue marcar progresso na trilha desta turma');
+  r = await json('GET', '/desafios', null, outroLiderTokenTmp);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.length, 0); // a trilha da turma dele está vazia
+  r = await json('PUT', `/desafios/${desafioId}`, { concluido: true }, outroLiderTokenTmp);
+  assert.strictEqual(r.status, 404); // desafio não pertence à turma desse líder
 
-  console.log('→ desafios: liderado não acessa a rota (é só do líder) e outro líder não edita a trilha alheia');
-  r = await json('GET', '/desafios', null, tokenLiderado);
-  assert.strictEqual(r.status, 403);
-  r = await json('DELETE', `/desafios/${desafioId}`, null, outroLiderTokenTmp);
-  assert.strictEqual(r.status, 404);
-
-  console.log('→ desafios: excluir remove da lista');
-  r = await json('DELETE', `/desafios/${desafioId}`, null, tokenLider);
+  console.log('→ admin exclui um item e ele some da trilha (pro líder também)');
+  r = await json('DELETE', `/admin/desafios/${desafioSemPontosId}`, null, tokenAdmin);
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/desafios', null, tokenLider);
-  assert.strictEqual(r.body.length, 0);
+  assert.strictEqual(r.body.length, 1);
+
+  console.log('→ admin reatribui um líder pra outra turma (ex: conta criada antes de turmas existirem)');
+  r = await json('GET', '/admin/lideres', null, tokenAdmin);
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.length >= 2);
+  r = await json('PUT', `/admin/lideres/${outroLider.body.id}`, { turmaId }, tokenAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.turma_id, turmaId);
 
   console.log('→ plano de gestão: leitura antes de salvar vem vazia, sem criar linha');
   r = await json('GET', '/plano-gestao', null, tokenLider);

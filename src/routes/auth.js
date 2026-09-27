@@ -6,12 +6,20 @@ const { assinarToken } = require('../middleware/auth');
 const router = express.Router();
 
 function sanitizarUser(u) {
-  return { id: u.id, role: u.role, nome: u.nome, email: u.email, area: u.area, cargo: u.cargo };
+  return { id: u.id, role: u.role, nome: u.nome, email: u.email, area: u.area, cargo: u.cargo, turmaId: u.turma_id };
 }
 
-// Cadastro de um novo líder (cria o workspace dele).
-router.post('/registrar-lider', async (req, res) => {
-  const { nome, email, senha, area, cargo } = req.body || {};
+// Cria a primeira (e única) conta de administrador do sistema. Só funciona
+// enquanto nenhum admin existir ainda — depois disso fica permanentemente
+// desativada, então não precisa (nem deve) guardar senha nenhuma no código:
+// quem for virar admin chama essa rota uma vez, com a própria senha.
+router.post('/bootstrap-admin', async (req, res) => {
+  const { rows: existentes } = await pool.query("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+  if (existentes.length) {
+    return res.status(403).json({ erro: 'Já existe um administrador — esta rota não pode mais ser usada.' });
+  }
+
+  const { nome, email, senha } = req.body || {};
   if (!nome || !email || !senha) {
     return res.status(400).json({ erro: 'Informe nome, e-mail e senha.' });
   }
@@ -20,24 +28,18 @@ router.post('/registrar-lider', async (req, res) => {
   }
 
   const emailNormalizado = String(email).trim().toLowerCase();
-  const existente = await pool.query('SELECT id FROM users WHERE email = $1', [emailNormalizado]);
-  if (existente.rows.length) {
-    return res.status(409).json({ erro: 'Já existe uma conta com este e-mail.' });
-  }
-
   const senhaHash = await bcrypt.hash(senha, 10);
   const { rows } = await pool.query(
-    `INSERT INTO users (role, nome, email, senha_hash, area, cargo)
-     VALUES ('lider', $1, $2, $3, $4, $5)
-     RETURNING id, role, nome, email, area, cargo`,
-    [nome.trim(), emailNormalizado, senhaHash, area || null, cargo || null]
+    `INSERT INTO users (role, nome, email, senha_hash) VALUES ('admin', $1, $2, $3)
+     RETURNING id, role, nome, email, area, cargo, turma_id`,
+    [nome.trim(), emailNormalizado, senhaHash]
   );
 
   const user = rows[0];
   res.status(201).json({ token: assinarToken(user), user: sanitizarUser(user) });
 });
 
-// Login — serve tanto para líder quanto para liderado (mesma tabela de usuários).
+// Login — serve pra admin, líder e liderado (mesma tabela de usuários).
 router.post('/login', async (req, res) => {
   const { email, senha } = req.body || {};
   if (!email || !senha) {
