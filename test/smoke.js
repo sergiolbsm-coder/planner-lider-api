@@ -386,6 +386,7 @@ async function main() {
   r = await json('GET', '/plano-gestao', null, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.visao_missao, '');
+  assert.strictEqual(r.body.de_onde_viemos, '');
 
   console.log('→ plano de gestão: salvar só a visão não pode apagar o lema salvo depois (PUT parcial)');
   r = await json('PUT', '/plano-gestao', { visaoMissao: 'Ser referência em excelência operacional.' }, tokenLider);
@@ -394,6 +395,13 @@ async function main() {
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.lema_do_ano, 'Simplificar para crescer');
   assert.strictEqual(r.body.visao_missao, 'Ser referência em excelência operacional.'); // <- não pode ter sido apagada
+
+  console.log('→ plano de gestão: Ferramenta Avião salva sem apagar os campos da Criação do Plano');
+  r = await json('PUT', '/plano-gestao', { deOndeViemos: 'Começamos como uma área de suporte.', paraOndeVamos: 'Ser referência em resultado e cultura.' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.de_onde_viemos, 'Começamos como uma área de suporte.');
+  assert.strictEqual(r.body.para_onde_vamos, 'Ser referência em resultado e cultura.');
+  assert.strictEqual(r.body.lema_do_ano, 'Simplificar para crescer'); // <- não pode ter sido apagado
 
   console.log('→ diagnóstico: brainstorm de desafios e oportunidades');
   r = await json('POST', '/diagnostico', { tipo: 'desafio', texto: 'Alta rotatividade no turno da noite' }, tokenLider);

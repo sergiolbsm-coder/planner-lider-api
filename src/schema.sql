@@ -201,6 +201,9 @@ CREATE INDEX IF NOT EXISTS idx_desafios_progresso_lider_id ON desafios_progresso
 -- Plano de Gestão do líder — "Passo 1: Criação do Plano" do material oficial
 -- (expectativas do ano, visão/missão, pontos fortes da equipe, metas do ano,
 -- lema e combinados). Uma linha por líder, editável e reapresentável à equipe.
+-- de_onde_viemos..para_onde_vamos são a "Ferramenta Avião" (Passo 3 —
+-- Apresentação): as 5 perguntas de alinhamento organizacional, preenchidas
+-- na aba de apresentação e usadas na hora de alinhar a equipe com o plano.
 CREATE TABLE IF NOT EXISTS plano_gestao (
   lider_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   expectativas_ano TEXT,
@@ -210,8 +213,18 @@ CREATE TABLE IF NOT EXISTS plano_gestao (
   meta_processos TEXT,
   lema_do_ano TEXT,
   combinados TEXT,
+  de_onde_viemos TEXT,
+  como_nos_guiamos TEXT,
+  para_quem_valor TEXT,
+  o_que_da_poder TEXT,
+  para_onde_vamos TEXT,
   atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE plano_gestao ADD COLUMN IF NOT EXISTS de_onde_viemos TEXT;
+ALTER TABLE plano_gestao ADD COLUMN IF NOT EXISTS como_nos_guiamos TEXT;
+ALTER TABLE plano_gestao ADD COLUMN IF NOT EXISTS para_quem_valor TEXT;
+ALTER TABLE plano_gestao ADD COLUMN IF NOT EXISTS o_que_da_poder TEXT;
+ALTER TABLE plano_gestao ADD COLUMN IF NOT EXISTS para_onde_vamos TEXT;
 
 -- Diagnóstico — brainstorm de Desafios e Oportunidades da equipe/área (2
 -- colunas do material oficial), lista livre por líder.
