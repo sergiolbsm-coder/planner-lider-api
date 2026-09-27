@@ -231,6 +231,36 @@ async function main() {
   r = await json('GET', '/arquivos', null, tokenLider);
   assert.strictEqual(r.body.length, 0);
 
+  console.log('→ desafios: criar item na trilha');
+  r = await json('POST', '/desafios', { titulo: 'Montar minha equipe', descricao: 'Cadastrar liderados.', secaoAlvo: 'liderados', ordem: 0 }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const desafioId = r.body.id;
+  assert.strictEqual(r.body.concluido, false);
+
+  console.log('→ desafios: marcar como concluído não pode apagar título/descrição (PUT parcial)');
+  r = await json('PUT', `/desafios/${desafioId}`, { concluido: true }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.concluido, true);
+  assert.strictEqual(r.body.titulo, 'Montar minha equipe'); // <- não pode ter sido apagado
+
+  console.log('→ desafios: editar o texto não pode desmarcar o "concluído" já salvo');
+  r = await json('PUT', `/desafios/${desafioId}`, { titulo: 'Montar e conhecer minha equipe' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.titulo, 'Montar e conhecer minha equipe');
+  assert.strictEqual(r.body.concluido, true); // <- idem, não pode ter voltado a false
+
+  console.log('→ desafios: liderado não acessa a rota (é só do líder) e outro líder não edita a trilha alheia');
+  r = await json('GET', '/desafios', null, tokenLiderado);
+  assert.strictEqual(r.status, 403);
+  r = await json('DELETE', `/desafios/${desafioId}`, null, outroLiderTokenTmp);
+  assert.strictEqual(r.status, 404);
+
+  console.log('→ desafios: excluir remove da lista');
+  r = await json('DELETE', `/desafios/${desafioId}`, null, tokenLider);
+  assert.strictEqual(r.status, 204);
+  r = await json('GET', '/desafios', null, tokenLider);
+  assert.strictEqual(r.body.length, 0);
+
   console.log('→ excluir liderado remove também os registros do diário (cascade)');
   r = await json('DELETE', `/liderados/${liderado.id}`, null, tokenLider);
   assert.strictEqual(r.status, 204);

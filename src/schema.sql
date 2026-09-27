@@ -147,6 +147,21 @@ CREATE TABLE IF NOT EXISTS autoavaliacoes (
 );
 CREATE INDEX IF NOT EXISTS idx_autoavaliacoes_lider_id ON autoavaliacoes(lider_id);
 
+-- Desafios do líder — trilha de passo a passo (checklist) que o próprio líder
+-- parametriza: a seed inicial vem com itens padrão (ver desafiosPadrao() no
+-- frontend), mas o líder pode adicionar, editar, reordenar e remover livremente.
+CREATE TABLE IF NOT EXISTS desafios_itens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  titulo TEXT NOT NULL,
+  descricao TEXT,
+  secao_alvo TEXT,
+  concluido BOOLEAN NOT NULL DEFAULT false,
+  ordem INT NOT NULL DEFAULT 0,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_desafios_itens_lider_id ON desafios_itens(lider_id);
+
 -- Arquivos da aula — material que o líder sobe pra turma (liderados) baixar
 -- direto do site, sem precisar do Google Drive (bloqueado por proxy em
 -- algumas empresas). Guardado como bytea no próprio Postgres: o disco do
