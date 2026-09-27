@@ -249,8 +249,33 @@ async function main() {
   r = await json('GET', '/arquivos', null, outroLiderTokenTmp);
   assert.strictEqual(r.body.length, 0); // trilha/arquivos da outra turma estão vazios pra esse líder
 
-  console.log('→ admin exclui o arquivo e ele some da lista');
-  r = await json('DELETE', `/admin/arquivos/${arquivoId}`, null, tokenAdmin);
+  console.log('→ admin vincula o mesmo arquivo à outra turma (copiar/vincular sem duplicar conteúdo)');
+  r = await json('POST', `/admin/arquivos/${arquivoId}/vincular`, { turmaId: outraTurma.body.id }, tokenAdmin);
+  assert.strictEqual(r.status, 204, JSON.stringify(r.body));
+  r = await json('GET', '/arquivos', null, outroLiderTokenTmp);
+  assert.strictEqual(r.body.length, 1); // agora aparece pra essa turma também
+  baixado = await download(`/arquivos/${arquivoId}/download`, loginOutroLiderado.body.token);
+  assert.strictEqual(baixado.status, 200); // e o liderado dela já consegue baixar
+  assert.ok(baixado.buffer.equals(conteudoOriginal));
+
+  console.log('→ vincular a pasta inteira de uma vez ("copiar pasta pra outra turma")');
+  const terceiraTurma = await json('POST', '/admin/turmas', { nome: 'Turma 2026.3' }, tokenAdmin);
+  r = await json('POST', `/admin/turmas/${turmaId}/pastas/vincular`, { pasta: 'Módulo 2', turmaDestinoId: terceiraTurma.body.id }, tokenAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.vinculados, 1);
+
+  console.log('→ remover de uma turma só desvincula (o arquivo continua nas outras)');
+  r = await json('DELETE', `/admin/turmas/${turmaId}/arquivos/${arquivoId}`, null, tokenAdmin);
+  assert.strictEqual(r.status, 204, JSON.stringify(r.body));
+  r = await json('GET', '/arquivos', null, tokenLider);
+  assert.strictEqual(r.body.length, 0); // sumiu da turma original
+  r = await json('GET', '/arquivos', null, outroLiderTokenTmp);
+  assert.strictEqual(r.body.length, 1); // mas continua na turma vinculada depois
+
+  console.log('→ admin exclui o arquivo da última turma vinculada e ele desaparece de vez');
+  r = await json('DELETE', `/admin/turmas/${outraTurma.body.id}/arquivos/${arquivoId}`, null, tokenAdmin);
+  assert.strictEqual(r.status, 204);
+  r = await json('DELETE', `/admin/turmas/${terceiraTurma.body.id}/arquivos/${arquivoId}`, null, tokenAdmin);
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/arquivos', null, tokenLider);
   assert.strictEqual(r.body.length, 0);

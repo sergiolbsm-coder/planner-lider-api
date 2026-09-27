@@ -231,7 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_diagnostico_itens_lider_id ON diagnostico_itens(l
 -- disco do Render é efêmero (some a cada deploy/restart), o banco não.
 CREATE TABLE IF NOT EXISTS arquivos_aula (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  turma_id UUID NOT NULL REFERENCES turmas(id) ON DELETE CASCADE,
+  turma_id UUID REFERENCES turmas(id) ON DELETE CASCADE,
   nome TEXT NOT NULL,
   descricao TEXT,
   pasta TEXT,
@@ -240,4 +240,25 @@ CREATE TABLE IF NOT EXISTS arquivos_aula (
   conteudo BYTEA NOT NULL,
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_arquivos_aula_turma_id ON arquivos_aula(turma_id);
+-- turma_id vira legado (fica nulo pra sempre em arquivos novos) porque um
+-- mesmo arquivo agora pode estar vinculado a várias turmas — ver
+-- arquivo_turmas logo abaixo, que é quem manda de verdade.
+ALTER TABLE arquivos_aula ALTER COLUMN turma_id DROP NOT NULL;
+
+-- Vínculo N:N entre arquivo e turma: dá pra copiar/vincular a mesma pasta ou
+-- arquivo em mais de uma turma sem duplicar o conteúdo (bytea) — só a linha
+-- de vínculo é nova.
+CREATE TABLE IF NOT EXISTS arquivo_turmas (
+  arquivo_id UUID NOT NULL REFERENCES arquivos_aula(id) ON DELETE CASCADE,
+  turma_id UUID NOT NULL REFERENCES turmas(id) ON DELETE CASCADE,
+  PRIMARY KEY (arquivo_id, turma_id)
+);
+CREATE INDEX IF NOT EXISTS idx_arquivo_turmas_turma_id ON arquivo_turmas(turma_id);
+
+-- Migra vínculos antigos (de quando só existia arquivos_aula.turma_id) pra
+-- tabela nova. Idempotente: depois da primeira vez, todo arquivo_id já com
+-- vínculo cai no ON CONFLICT DO NOTHING; arquivos novos nascem com turma_id
+-- NULL (o app já não usa mais essa coluna pra gravar), então não entram aqui.
+INSERT INTO arquivo_turmas (arquivo_id, turma_id)
+SELECT id, turma_id FROM arquivos_aula WHERE turma_id IS NOT NULL
+ON CONFLICT DO NOTHING;

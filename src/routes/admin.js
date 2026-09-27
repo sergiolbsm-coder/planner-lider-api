@@ -157,12 +157,17 @@ router.delete('/desafios/:id', async (req, res) => {
   res.status(204).end();
 });
 
-// ---- Arquivos da Aula da turma (upload/edição/exclusão — só o admin) ----
-const SELECT_ARQUIVO_METADADOS = 'id, turma_id, nome, descricao, pasta, tipo_mime, tamanho_bytes, criado_em';
+// ---- Arquivos da Aula (upload/edição/vínculo — só o admin) ----
+// Um arquivo pode estar vinculado a mais de uma turma (arquivo_turmas, N:N) —
+// editar/excluir e o próprio conteúdo são únicos por arquivo; o que muda por
+// turma é só quais arquivos aparecem pra ela.
+const SELECT_ARQUIVO_METADADOS = 'a.id, a.nome, a.descricao, a.pasta, a.tipo_mime, a.tamanho_bytes, a.criado_em';
 
 router.get('/turmas/:turmaId/arquivos', async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT ${SELECT_ARQUIVO_METADADOS} FROM arquivos_aula WHERE turma_id = $1 ORDER BY criado_em DESC`,
+    `SELECT ${SELECT_ARQUIVO_METADADOS} FROM arquivos_aula a
+     JOIN arquivo_turmas vt ON vt.arquivo_id = a.id AND vt.turma_id = $1
+     ORDER BY a.criado_em DESC`,
     [req.params.turmaId]
   );
   res.json(rows);
@@ -178,19 +183,30 @@ router.post('/turmas/:turmaId/arquivos', upload.single('arquivo'), async (req, r
   const descricao = (req.body.descricao || '').trim() || null;
   const pasta = (req.body.pasta || '').trim() || null;
 
-  const { rows } = await pool.query(
-    `INSERT INTO arquivos_aula (turma_id, nome, descricao, pasta, tipo_mime, tamanho_bytes, conteudo)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
-     RETURNING ${SELECT_ARQUIVO_METADADOS}`,
-    [turmaId, nome, descricao, pasta, req.file.mimetype || 'application/octet-stream', req.file.size, req.file.buffer]
-  );
-  res.status(201).json(rows[0]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO arquivos_aula (nome, descricao, pasta, tipo_mime, tamanho_bytes, conteudo)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING id, nome, descricao, pasta, tipo_mime, tamanho_bytes, criado_em`,
+      [nome, descricao, pasta, req.file.mimetype || 'application/octet-stream', req.file.size, req.file.buffer]
+    );
+    await client.query('INSERT INTO arquivo_turmas (arquivo_id, turma_id) VALUES ($1,$2)', [rows[0].id, turmaId]);
+    await client.query('COMMIT');
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
 // Renomeia, move de pasta ou edita a descrição (não troca o conteúdo — pra
-// isso é excluir e subir de novo). O front sempre manda os 3 campos juntos,
-// então é um UPDATE direto, sem COALESCE (mesma lógica de antes, quando essa
-// rota ainda era do líder).
+// isso é excluir e subir de novo). Afeta todas as turmas vinculadas ao mesmo
+// arquivo, já que é o mesmo conteúdo. O front sempre manda os 3 campos
+// juntos, então é um UPDATE direto, sem COALESCE.
 router.put('/arquivos/:id', async (req, res) => {
   const nome = (req.body.nome || '').trim();
   if (!nome) return res.status(400).json({ erro: 'Dê um nome ao arquivo.' });
@@ -200,16 +216,64 @@ router.put('/arquivos/:id', async (req, res) => {
   const { rows } = await pool.query(
     `UPDATE arquivos_aula SET nome = $1, descricao = $2, pasta = $3
      WHERE id = $4
-     RETURNING ${SELECT_ARQUIVO_METADADOS}`,
+     RETURNING id, nome, descricao, pasta, tipo_mime, tamanho_bytes, criado_em`,
     [nome, descricao, pasta, req.params.id]
   );
   if (!rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
   res.json(rows[0]);
 });
 
-router.delete('/arquivos/:id', async (req, res) => {
-  const { rowCount } = await pool.query('DELETE FROM arquivos_aula WHERE id = $1', [req.params.id]);
-  if (!rowCount) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+// Vincula um arquivo já existente a outra turma — é o "copiar" e o "vincular
+// em mais de uma turma" ao mesmo tempo: mesmo conteúdo, sem duplicar bytea.
+router.post('/arquivos/:id/vincular', async (req, res) => {
+  const { turmaId } = req.body || {};
+  if (!turmaId) return res.status(400).json({ erro: 'Informe a turma de destino.' });
+  const arquivo = await pool.query('SELECT id FROM arquivos_aula WHERE id = $1', [req.params.id]);
+  if (!arquivo.rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+  const turma = await pool.query('SELECT id FROM turmas WHERE id = $1', [turmaId]);
+  if (!turma.rows.length) return res.status(404).json({ erro: 'Turma de destino não encontrada.' });
+
+  await pool.query(
+    'INSERT INTO arquivo_turmas (arquivo_id, turma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+    [req.params.id, turmaId]
+  );
+  res.status(204).end();
+});
+
+// Vincula TODOS os arquivos de uma pasta (dentro da turma de origem) a outra
+// turma de uma vez — "copiar pasta pra outra turma".
+router.post('/turmas/:turmaId/pastas/vincular', async (req, res) => {
+  const { pasta, turmaDestinoId } = req.body || {};
+  if (!turmaDestinoId) return res.status(400).json({ erro: 'Informe a turma de destino.' });
+  const turmaDestino = await pool.query('SELECT id FROM turmas WHERE id = $1', [turmaDestinoId]);
+  if (!turmaDestino.rows.length) return res.status(404).json({ erro: 'Turma de destino não encontrada.' });
+
+  const { rows: arquivos } = await pool.query(
+    `SELECT a.id FROM arquivos_aula a
+     JOIN arquivo_turmas vt ON vt.arquivo_id = a.id AND vt.turma_id = $1
+     WHERE ${pasta ? 'a.pasta = $2' : 'a.pasta IS NULL'}`,
+    pasta ? [req.params.turmaId, pasta] : [req.params.turmaId]
+  );
+
+  for (const a of arquivos) {
+    await pool.query('INSERT INTO arquivo_turmas (arquivo_id, turma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [a.id, turmaDestinoId]);
+  }
+  res.json({ vinculados: arquivos.length });
+});
+
+// Remove o arquivo desta turma. Se não sobrar nenhuma outra turma vinculada,
+// apaga o arquivo de vez (senão ficaria lixo órfão pra sempre no banco).
+router.delete('/turmas/:turmaId/arquivos/:id', async (req, res) => {
+  const { rowCount } = await pool.query(
+    'DELETE FROM arquivo_turmas WHERE arquivo_id = $1 AND turma_id = $2',
+    [req.params.id, req.params.turmaId]
+  );
+  if (!rowCount) return res.status(404).json({ erro: 'Arquivo não encontrado nesta turma.' });
+
+  const restante = await pool.query('SELECT 1 FROM arquivo_turmas WHERE arquivo_id = $1 LIMIT 1', [req.params.id]);
+  if (!restante.rows.length) {
+    await pool.query('DELETE FROM arquivos_aula WHERE id = $1', [req.params.id]);
+  }
   res.status(204).end();
 });
 
