@@ -28,6 +28,11 @@ router.post('/bootstrap-admin', async (req, res) => {
   }
 
   const emailNormalizado = String(email).trim().toLowerCase();
+  const existente = await pool.query('SELECT id, role FROM users WHERE email = $1', [emailNormalizado]);
+  if (existente.rows.length) {
+    return res.status(409).json({ erro: `Já existe uma conta (${existente.rows[0].role}) com este e-mail — use outro e-mail para o administrador.` });
+  }
+
   const senhaHash = await bcrypt.hash(senha, 10);
   const { rows } = await pool.query(
     `INSERT INTO users (role, nome, email, senha_hash) VALUES ('admin', $1, $2, $3)
