@@ -34,6 +34,26 @@ router.post('/turmas', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+router.put('/turmas/:id', async (req, res) => {
+  const { nome } = req.body || {};
+  if (!nome || !nome.trim()) return res.status(400).json({ erro: 'Dê um nome à turma.' });
+  const { rows } = await pool.query('UPDATE turmas SET nome = $1 WHERE id = $2 RETURNING *', [nome.trim(), req.params.id]);
+  if (!rows.length) return res.status(404).json({ erro: 'Turma não encontrada.' });
+  res.json(rows[0]);
+});
+
+// Excluir a turma solta os líderes dela (viram "sem turma", não são apagados
+// — cascade de users.turma_id é ON DELETE SET NULL) e apaga a trilha de
+// desafios da turma (cascade). Arquivos que ficarem sem nenhuma turma
+// vinculada (porque só estavam nesta) também são limpos, senão viram lixo
+// órfão pra sempre no banco.
+router.delete('/turmas/:id', async (req, res) => {
+  const { rowCount } = await pool.query('DELETE FROM turmas WHERE id = $1', [req.params.id]);
+  if (!rowCount) return res.status(404).json({ erro: 'Turma não encontrada.' });
+  await pool.query('DELETE FROM arquivos_aula WHERE id NOT IN (SELECT arquivo_id FROM arquivo_turmas)');
+  res.status(204).end();
+});
+
 // ---- Líderes ----
 // Todos os líderes, com a turma de cada um — usado pra reatribuir líderes
 // antigos (de antes de turmas existirem) a uma turma.
@@ -240,25 +260,55 @@ router.post('/arquivos/:id/vincular', async (req, res) => {
   res.status(204).end();
 });
 
-// Vincula TODOS os arquivos de uma pasta (dentro da turma de origem) a outra
-// turma de uma vez — "copiar pasta pra outra turma".
-router.post('/turmas/:turmaId/pastas/vincular', async (req, res) => {
-  const { pasta, turmaDestinoId } = req.body || {};
-  if (!turmaDestinoId) return res.status(400).json({ erro: 'Informe a turma de destino.' });
-  const turmaDestino = await pool.query('SELECT id FROM turmas WHERE id = $1', [turmaDestinoId]);
-  if (!turmaDestino.rows.length) return res.status(404).json({ erro: 'Turma de destino não encontrada.' });
-
-  const { rows: arquivos } = await pool.query(
+// Busca os ids dos arquivos de uma pasta (ou "sem pasta", se pasta for vazio)
+// que estão vinculados a uma turma específica — usado tanto por "vincular
+// pasta" quanto por "transferir pasta".
+async function arquivosDaPasta(turmaId, pasta) {
+  const { rows } = await pool.query(
     `SELECT a.id FROM arquivos_aula a
      JOIN arquivo_turmas vt ON vt.arquivo_id = a.id AND vt.turma_id = $1
      WHERE ${pasta ? 'a.pasta = $2' : 'a.pasta IS NULL'}`,
-    pasta ? [req.params.turmaId, pasta] : [req.params.turmaId]
+    pasta ? [turmaId, pasta] : [turmaId]
   );
+  return rows;
+}
 
+async function validarTurmaDestino(turmaId, turmaDestinoId) {
+  if (!turmaDestinoId) return 'Informe a turma de destino.';
+  if (turmaDestinoId === turmaId) return 'Escolha uma turma diferente da atual.';
+  const turma = await pool.query('SELECT id FROM turmas WHERE id = $1', [turmaDestinoId]);
+  if (!turma.rows.length) return 'Turma de destino não encontrada.';
+  return null;
+}
+
+// Vincula TODOS os arquivos de uma pasta (dentro da turma de origem) a outra
+// turma de uma vez — "copiar pasta pra outra turma". O arquivo continua
+// disponível na turma de origem também.
+router.post('/turmas/:turmaId/pastas/vincular', async (req, res) => {
+  const { pasta, turmaDestinoId } = req.body || {};
+  const erro = await validarTurmaDestino(req.params.turmaId, turmaDestinoId);
+  if (erro) return res.status(erro === 'Informe a turma de destino.' ? 400 : 404).json({ erro });
+
+  const arquivos = await arquivosDaPasta(req.params.turmaId, pasta);
   for (const a of arquivos) {
     await pool.query('INSERT INTO arquivo_turmas (arquivo_id, turma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [a.id, turmaDestinoId]);
   }
   res.json({ vinculados: arquivos.length });
+});
+
+// Transfere a pasta inteira pra outra turma: vincula na turma de destino e
+// desvincula da turma de origem (o arquivo some de lá).
+router.post('/turmas/:turmaId/pastas/transferir', async (req, res) => {
+  const { pasta, turmaDestinoId } = req.body || {};
+  const erro = await validarTurmaDestino(req.params.turmaId, turmaDestinoId);
+  if (erro) return res.status(erro === 'Informe a turma de destino.' || erro === 'Escolha uma turma diferente da atual.' ? 400 : 404).json({ erro });
+
+  const arquivos = await arquivosDaPasta(req.params.turmaId, pasta);
+  for (const a of arquivos) {
+    await pool.query('INSERT INTO arquivo_turmas (arquivo_id, turma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [a.id, turmaDestinoId]);
+    await pool.query('DELETE FROM arquivo_turmas WHERE arquivo_id = $1 AND turma_id = $2', [a.id, req.params.turmaId]);
+  }
+  res.json({ transferidos: arquivos.length });
 });
 
 // Remove o arquivo desta turma. Se não sobrar nenhuma outra turma vinculada,

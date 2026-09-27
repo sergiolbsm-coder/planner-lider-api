@@ -77,6 +77,13 @@ async function main() {
   r = await json('POST', `/admin/turmas/${turmaId}/lideres`, { nome: 'Carla Mendes', email: 'carla@teste.com', senha: '123456', area: 'Operações' }, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
 
+  console.log('→ admin edita o nome da turma');
+  r = await json('PUT', `/admin/turmas/${turmaId}`, { nome: 'Turma 2026.1 (renomeada)' }, tokenAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.nome, 'Turma 2026.1 (renomeada)');
+  r = await json('PUT', `/admin/turmas/${turmaId}`, { nome: 'Turma 2026.1' }, tokenAdmin); // volta o nome original pro resto do teste
+  assert.strictEqual(r.status, 200);
+
   console.log('→ login líder');
   r = await json('POST', '/auth/login', { email: 'carla@teste.com', senha: '123456' });
   assert.strictEqual(r.status, 200);
@@ -264,6 +271,25 @@ async function main() {
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.vinculados, 1);
 
+  console.log('→ transferir uma pasta inteira pra outra turma (some da origem, aparece só no destino)');
+  const form2 = new FormData();
+  form2.append('arquivo', new Blob([conteudoOriginal], { type: 'application/pdf' }), 'aula-03.pdf');
+  form2.append('nome', 'Aula 03');
+  form2.append('pasta', 'Módulo 3');
+  r = await upload(`/admin/turmas/${turmaId}/arquivos`, form2, tokenAdmin);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const arquivoId2 = r.body.id;
+
+  const quartaTurma = await json('POST', '/admin/turmas', { nome: 'Turma 2026.4' }, tokenAdmin);
+  r = await json('POST', `/admin/turmas/${turmaId}/pastas/transferir`, { pasta: 'Módulo 3', turmaDestinoId: quartaTurma.body.id }, tokenAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.transferidos, 1);
+
+  r = await json('GET', `/admin/turmas/${turmaId}/arquivos`, null, tokenAdmin);
+  assert.ok(!r.body.some(a => a.id === arquivoId2), 'arquivo transferido não pode continuar na turma de origem');
+  r = await json('GET', `/admin/turmas/${quartaTurma.body.id}/arquivos`, null, tokenAdmin);
+  assert.ok(r.body.some(a => a.id === arquivoId2), 'arquivo transferido tem que aparecer na turma de destino');
+
   console.log('→ remover de uma turma só desvincula (o arquivo continua nas outras)');
   r = await json('DELETE', `/admin/turmas/${turmaId}/arquivos/${arquivoId}`, null, tokenAdmin);
   assert.strictEqual(r.status, 204, JSON.stringify(r.body));
@@ -394,6 +420,21 @@ async function main() {
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/diario/resumo-equipe', null, tokenLider);
   assert.strictEqual(r.body.length, 0);
+
+  console.log('→ excluir turma solta o líder dela (não apaga) e limpa arquivo que ficou órfão');
+  const turmaDescartavel = await json('POST', '/admin/turmas', { nome: 'Turma Descartável' }, tokenAdmin);
+  const liderDescartavel = await json('POST', `/admin/turmas/${turmaDescartavel.body.id}/lideres`, { nome: 'Líder Descartável', email: 'descartavel@teste.com', senha: '123456' }, tokenAdmin);
+
+  r = await json('DELETE', `/admin/turmas/${quartaTurma.body.id}`, null, tokenAdmin); // única turma do arquivoId2
+  assert.strictEqual(r.status, 204, JSON.stringify(r.body));
+  r = await json('DELETE', `/admin/turmas/${turmaDescartavel.body.id}`, null, tokenAdmin);
+  assert.strictEqual(r.status, 204, JSON.stringify(r.body));
+
+  r = await json('GET', '/admin/lideres', null, tokenAdmin);
+  const liderDescartavelDepois = r.body.find(l => l.id === liderDescartavel.body.id);
+  assert.strictEqual(liderDescartavelDepois.turma_id, null); // líder não foi apagado, só ficou sem turma
+  r = await json('DELETE', `/admin/turmas/${turmaDescartavel.body.id}`, null, tokenAdmin);
+  assert.strictEqual(r.status, 404); // já foi excluída, não existe mais
 
   server.close();
   console.log('\n✅ Todos os fluxos passaram.');
