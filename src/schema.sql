@@ -28,12 +28,15 @@ CREATE TABLE IF NOT EXISTS users (
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_users_lider_id ON users(lider_id);
-CREATE INDEX IF NOT EXISTS idx_users_turma_id ON users(turma_id);
 -- ALTERs separados porque "users" já existe em produção desde antes do papel
--- de administrador e da turma_id (mesmo motivo do ALTER de arquivos_aula.pasta).
+-- de administrador e da turma_id (mesmo motivo do ALTER de arquivos_aula.pasta)
+-- — por isso vêm ANTES do CREATE INDEX de turma_id: numa tabela já existente,
+-- o CREATE TABLE IF NOT EXISTS acima é ignorado inteiro, então a coluna só
+-- passa a existir de fato aqui.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS turma_id UUID REFERENCES turmas(id) ON DELETE SET NULL;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'lider', 'liderado'));
+CREATE INDEX IF NOT EXISTS idx_users_turma_id ON users(turma_id);
 
 -- Perfil estendido do liderado — bloco "Conhecer o Liderado" do Diário de Bordo.
 CREATE TABLE IF NOT EXISTS perfis_liderado (
