@@ -29,6 +29,9 @@ function template({ nome, email, senha, turmaNome, frontendUrl }) {
 async function enviarConviteLider({ nome, email, senha, turmaNome }) {
   const apiKey = process.env.RESEND_API_KEY;
   const remetente = process.env.EMAIL_FROM;
+  // O remetente (EMAIL_FROM) não é uma caixa real — respostas do líder vão
+  // pra cá em vez de se perder. Sem essa variável, cai no e-mail do Trainer.
+  const replyTo = process.env.EMAIL_REPLY_TO || 'sergiolbsm@gmail.com';
   const frontendUrl = process.env.FRONTEND_URL || 'https://planner.institutodalideranca.com.br';
 
   if (!apiKey || !remetente) {
@@ -44,7 +47,7 @@ async function enviarConviteLider({ nome, email, senha, turmaNome }) {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from: remetente, to: email, subject: assunto, html }),
+    body: JSON.stringify({ from: remetente, to: email, subject: assunto, html, reply_to: replyTo }),
   });
 
   if (!resposta.ok) {
