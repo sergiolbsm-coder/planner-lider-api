@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../db');
-const { assinarToken } = require('../middleware/auth');
+const { assinarToken, requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -89,6 +89,40 @@ router.post('/login', async (req, res) => {
   }
 
   res.json({ token: assinarToken(user), user: sanitizarUser(user) });
+});
+
+// Lista as outras contas que usam o mesmo e-mail da sessão atual (ex: a
+// mesma pessoa é admin e também líder em uma ou mais turmas) — usado pra
+// mostrar o botão "Trocar de conta" sem precisar logar de novo com senha.
+// Só funciona com tokens emitidos depois que o e-mail passou a ir no JWT
+// (ver assinarToken); um token antigo simplesmente não lista nada.
+router.get('/minhas-contas', requireAuth, async (req, res) => {
+  if (!req.user.email) return res.json([]);
+  const { rows } = await pool.query(
+    `SELECT u.id, u.role, u.nome, t.nome AS turma_nome FROM users u
+     LEFT JOIN turmas t ON t.id = u.turma_id
+     WHERE u.email = $1 ORDER BY u.criado_em ASC`,
+    [req.user.email]
+  );
+  res.json(rows.map(u => ({ id: u.id, role: u.role, nome: u.nome, turmaNome: u.turma_nome || null })));
+});
+
+// Troca pra outra conta com o mesmo e-mail da sessão atual, sem pedir senha
+// de novo — já provou quem é ao logar na conta original; e como a unicidade
+// de e-mail garante que só a mesma pessoa pode ter mais de uma conta com
+// esse e-mail (ver unique index em schema.sql), trocar entre elas é seguro.
+router.post('/trocar-conta', requireAuth, async (req, res) => {
+  const { contaId } = req.body || {};
+  if (!contaId) return res.status(400).json({ erro: 'Informe a conta de destino.' });
+  if (!req.user.email) return res.status(400).json({ erro: 'Faça login de novo pra usar a troca de conta.' });
+
+  const { rows } = await pool.query('SELECT * FROM users WHERE id = $1', [contaId]);
+  const alvo = rows[0];
+  if (!alvo || alvo.email !== req.user.email) {
+    return res.status(403).json({ erro: 'Essa conta não pertence ao mesmo e-mail da sessão atual.' });
+  }
+
+  res.json({ token: assinarToken(alvo), user: sanitizarUser(alvo) });
 });
 
 module.exports = router;

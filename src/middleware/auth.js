@@ -8,8 +8,10 @@ if (!JWT_SECRET) {
 function assinarToken(user) {
   // liderId: o próprio id (se líder) ou o id do líder dono do quadro (se liderado).
   const liderId = user.role === 'lider' ? user.id : user.lider_id;
+  // email vai no token pra dar pra listar/trocar entre as outras contas que
+  // usam o mesmo e-mail (ex: admin que também é líder) sem pedir senha de novo.
   return jwt.sign(
-    { id: user.id, role: user.role, liderId, turmaId: user.turma_id || null, nome: user.nome },
+    { id: user.id, role: user.role, liderId, turmaId: user.turma_id || null, nome: user.nome, email: user.email },
     JWT_SECRET,
     { expiresIn: '30d' }
   );

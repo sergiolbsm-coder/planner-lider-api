@@ -76,6 +76,7 @@ async function main() {
   const turmaId = r.body.id;
   r = await json('POST', `/admin/turmas/${turmaId}/lideres`, { nome: 'Carla Mendes', email: 'carla@teste.com', senha: '123456', area: 'Operações' }, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const carlaLiderId = r.body.id;
 
   console.log('→ mesmo e-mail não pode repetir como líder DENTRO da mesma turma');
   r = await json('POST', `/admin/turmas/${turmaId}/lideres`, { nome: 'Carla Duplicada', email: 'carla@teste.com', senha: '123456' }, tokenAdmin);
@@ -99,6 +100,26 @@ async function main() {
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.user.role, 'lider');
   assert.strictEqual(r.body.user.id, liderMesmoEmailDoAdminId);
+  const tokenLiderMesmoEmailDoAdmin = r.body.token;
+
+  console.log('→ GET /auth/minhas-contas lista as duas contas do mesmo e-mail');
+  r = await json('GET', '/auth/minhas-contas', null, tokenLiderMesmoEmailDoAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.length, 2);
+  assert.ok(r.body.some(c => c.role === 'admin'));
+  assert.ok(r.body.some(c => c.role === 'lider' && c.id === liderMesmoEmailDoAdminId));
+
+  console.log('→ trocar de conta sem senha, direto pra conta admin do mesmo e-mail');
+  r = await json('POST', '/auth/trocar-conta', { contaId: null }, tokenLiderMesmoEmailDoAdmin);
+  assert.strictEqual(r.status, 400); // sem contaId
+  const contaAdminId = (await json('GET', '/auth/minhas-contas', null, tokenLiderMesmoEmailDoAdmin)).body.find(c => c.role === 'admin').id;
+  r = await json('POST', '/auth/trocar-conta', { contaId: contaAdminId }, tokenLiderMesmoEmailDoAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.user.role, 'admin');
+
+  console.log('→ trocar de conta pra uma conta de e-mail diferente é bloqueado');
+  r = await json('POST', '/auth/trocar-conta', { contaId: carlaLiderId }, tokenLiderMesmoEmailDoAdmin);
+  assert.strictEqual(r.status, 403, JSON.stringify(r.body)); // carla@teste.com é outro e-mail
 
   console.log('→ admin edita o nome da turma');
   r = await json('PUT', `/admin/turmas/${turmaId}`, { nome: 'Turma 2026.1 (renomeada)' }, tokenAdmin);
