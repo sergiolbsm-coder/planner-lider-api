@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const { pool } = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { enviarConviteLider } = require('../mail');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -75,7 +76,7 @@ router.get('/turmas/:turmaId/lideres', async (req, res) => {
 // Admin cadastra um líder já dentro de uma turma (o líder não se autocadastra mais).
 router.post('/turmas/:turmaId/lideres', async (req, res) => {
   const { turmaId } = req.params;
-  const turma = await pool.query('SELECT id FROM turmas WHERE id = $1', [turmaId]);
+  const turma = await pool.query('SELECT id, nome FROM turmas WHERE id = $1', [turmaId]);
   if (!turma.rows.length) return res.status(404).json({ erro: 'Turma não encontrada.' });
 
   const { nome, email, senha, area, cargo } = req.body || {};
@@ -106,6 +107,14 @@ router.post('/turmas/:turmaId/lideres', async (req, res) => {
       `INSERT INTO plano_acao_itens (lider_id, acao, como_fazer, impacto, prazo, ordem) VALUES ($1,$2,$3,$4,$5,$6)`,
       [novoLider.id, item.acao, item.como_fazer, item.impacto, item.prazo, 0]
     );
+  }
+
+  // O líder já foi criado no banco — se o e-mail falhar, o cadastro segue
+  // válido mesmo assim (admin ainda pode passar a senha por outro canal).
+  try {
+    await enviarConviteLider({ nome: novoLider.nome, email: novoLider.email, senha, turmaNome: turma.rows[0].nome });
+  } catch (err) {
+    console.error('Falha ao enviar e-mail de convite para', novoLider.email, err);
   }
 
   res.status(201).json(novoLider);
