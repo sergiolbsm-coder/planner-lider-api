@@ -69,6 +69,7 @@ direto no Render no próximo passo.
      node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
      ```
    - `ALLOWED_ORIGINS` — `https://planner.institutodalideranca.com.br`
+   - `RESEND_API_KEY` e `EMAIL_FROM` — pra disparar automaticamente o e-mail de convite quando um líder é cadastrado (via [Resend](https://resend.com); ver `.env.example`). Se omitidas, o cadastro do líder continua funcionando normalmente, só sem o e-mail (fica um aviso no log).
 5. Deploy. O Render te dá uma URL pública (ex: `https://planner-lider-api.onrender.com`) — é essa URL que o site vai chamar.
 
 > No plano gratuito do Render o serviço "dorme" depois de um tempo sem uso e demora alguns segundos pra acordar na primeira chamada — normal, não é bug.
