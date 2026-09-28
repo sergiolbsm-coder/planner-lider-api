@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   role TEXT NOT NULL CHECK (role IN ('admin', 'lider', 'liderado')),
   nome TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL,
   senha_hash TEXT NOT NULL,
   lider_id UUID REFERENCES users(id) ON DELETE CASCADE,
   turma_id UUID REFERENCES turmas(id) ON DELETE SET NULL,
@@ -37,6 +37,18 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS turma_id UUID REFERENCES turmas(id) O
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'lider', 'liderado'));
 CREATE INDEX IF NOT EXISTS idx_users_turma_id ON users(turma_id);
+-- A mesma pessoa (mesmo e-mail) pode ser líder em mais de uma turma — por
+-- exemplo o próprio administrador testando como líder, ou alguém que
+-- coordena duas turmas. Por isso a unicidade de e-mail deixou de ser global
+-- (era "users_email_key", da versão original da tabela) e passou a ser por
+-- (email, turma_id): mesmo e-mail não pode repetir DENTRO da mesma turma,
+-- mas pode existir em turmas diferentes. Como o Postgres nunca considera
+-- dois NULLs iguais numa unique constraint, isso também libera o e-mail do
+-- admin (turma_id sempre NULL) para ser reaproveitado como líder — o que é
+-- seguro porque só existe um admin (bloqueado à parte em /auth/bootstrap-admin,
+-- pela existência do papel, não pelo e-mail).
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_turma ON users(email, turma_id);
 
 -- Perfil estendido do liderado — bloco "Conhecer o Liderado" do Diário de Bordo.
 CREATE TABLE IF NOT EXISTS perfis_liderado (

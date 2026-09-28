@@ -82,9 +82,15 @@ router.post('/turmas/:turmaId/lideres', async (req, res) => {
   if (!nome || !email || !senha) return res.status(400).json({ erro: 'Informe nome, e-mail e senha.' });
   if (senha.length < 6) return res.status(400).json({ erro: 'A senha precisa ter pelo menos 6 caracteres.' });
 
+  // Checa duplicidade só DENTRO desta turma — a mesma pessoa (mesmo e-mail)
+  // pode ser líder em outra turma, ou até ser o próprio administrador usando
+  // o mesmo e-mail como conta de teste (ver unique index em schema.sql).
   const emailNormalizado = String(email).trim().toLowerCase();
-  const existente = await pool.query('SELECT id FROM users WHERE email = $1', [emailNormalizado]);
-  if (existente.rows.length) return res.status(409).json({ erro: 'Já existe uma conta com este e-mail.' });
+  const existente = await pool.query(
+    'SELECT id FROM users WHERE email = $1 AND role = $2 AND turma_id = $3',
+    [emailNormalizado, 'lider', turmaId]
+  );
+  if (existente.rows.length) return res.status(409).json({ erro: 'Este e-mail já é líder nesta turma.' });
 
   const senhaHash = await bcrypt.hash(senha, 10);
   const { rows } = await pool.query(
@@ -296,8 +302,11 @@ router.post('/turmas/:turmaId/pastas/vincular', async (req, res) => {
   res.json({ vinculados: arquivos.length });
 });
 
-// Transfere a pasta inteira pra outra turma: vincula na turma de destino e
-// desvincula da turma de origem (o arquivo some de lá).
+// Transfere a pasta inteira pra outra turma — na prática igual a "vincular
+// pasta" (fica uma cópia na turma de origem e outra na de destino); mantido
+// como rota/verbo separado porque no fluxo do admin faz sentido distinguir
+// "estou expandindo o uso desse material" (vincular) de "estou levando essa
+// pasta pra outra turma" (transferir), mesmo o resultado sendo o mesmo hoje.
 router.post('/turmas/:turmaId/pastas/transferir', async (req, res) => {
   const { pasta, turmaDestinoId } = req.body || {};
   const erro = await validarTurmaDestino(req.params.turmaId, turmaDestinoId);
@@ -306,7 +315,6 @@ router.post('/turmas/:turmaId/pastas/transferir', async (req, res) => {
   const arquivos = await arquivosDaPasta(req.params.turmaId, pasta);
   for (const a of arquivos) {
     await pool.query('INSERT INTO arquivo_turmas (arquivo_id, turma_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [a.id, turmaDestinoId]);
-    await pool.query('DELETE FROM arquivo_turmas WHERE arquivo_id = $1 AND turma_id = $2', [a.id, req.params.turmaId]);
   }
   res.json({ transferidos: arquivos.length });
 });

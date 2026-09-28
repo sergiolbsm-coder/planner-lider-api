@@ -77,6 +77,29 @@ async function main() {
   r = await json('POST', `/admin/turmas/${turmaId}/lideres`, { nome: 'Carla Mendes', email: 'carla@teste.com', senha: '123456', area: 'Operações' }, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
 
+  console.log('→ mesmo e-mail não pode repetir como líder DENTRO da mesma turma');
+  r = await json('POST', `/admin/turmas/${turmaId}/lideres`, { nome: 'Carla Duplicada', email: 'carla@teste.com', senha: '123456' }, tokenAdmin);
+  assert.strictEqual(r.status, 409, JSON.stringify(r.body));
+
+  console.log('→ mas o mesmo e-mail PODE ser líder em outra turma (ex: o próprio admin testando)');
+  const turmaExtra = await json('POST', '/admin/turmas', { nome: 'Turma 2026.Extra' }, tokenAdmin);
+  r = await json('POST', `/admin/turmas/${turmaExtra.body.id}/lideres`, { nome: 'Admin do Instituto', email: 'admin@teste.com', senha: '123456' }, tokenAdmin);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const liderMesmoEmailDoAdminId = r.body.id;
+
+  console.log('→ login com e-mail que bate em mais de uma conta devolve a lista pra escolher');
+  r = await json('POST', '/auth/login', { email: 'admin@teste.com', senha: '123456' });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.ok(Array.isArray(r.body.contas) && r.body.contas.length === 2, 'deveria listar as 2 contas com esse e-mail/senha');
+  assert.ok(r.body.contas.some(c => c.role === 'admin'));
+  assert.ok(r.body.contas.some(c => c.role === 'lider' && c.turmaNome === 'Turma 2026.Extra'));
+
+  console.log('→ login escolhendo a conta de líder (contaId) entra como líder, não como admin');
+  r = await json('POST', '/auth/login', { email: 'admin@teste.com', senha: '123456', contaId: liderMesmoEmailDoAdminId });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.user.role, 'lider');
+  assert.strictEqual(r.body.user.id, liderMesmoEmailDoAdminId);
+
   console.log('→ admin edita o nome da turma');
   r = await json('PUT', `/admin/turmas/${turmaId}`, { nome: 'Turma 2026.1 (renomeada)' }, tokenAdmin);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
@@ -271,7 +294,7 @@ async function main() {
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.vinculados, 1);
 
-  console.log('→ transferir uma pasta inteira pra outra turma (some da origem, aparece só no destino)');
+  console.log('→ transferir uma pasta inteira pra outra turma (fica uma cópia lá e outra na origem)');
   const form2 = new FormData();
   form2.append('arquivo', new Blob([conteudoOriginal], { type: 'application/pdf' }), 'aula-03.pdf');
   form2.append('nome', 'Aula 03');
@@ -286,7 +309,7 @@ async function main() {
   assert.strictEqual(r.body.transferidos, 1);
 
   r = await json('GET', `/admin/turmas/${turmaId}/arquivos`, null, tokenAdmin);
-  assert.ok(!r.body.some(a => a.id === arquivoId2), 'arquivo transferido não pode continuar na turma de origem');
+  assert.ok(r.body.some(a => a.id === arquivoId2), 'arquivo transferido tem que continuar na turma de origem (cópia)');
   r = await json('GET', `/admin/turmas/${quartaTurma.body.id}/arquivos`, null, tokenAdmin);
   assert.ok(r.body.some(a => a.id === arquivoId2), 'arquivo transferido tem que aparecer na turma de destino');
 
@@ -294,7 +317,7 @@ async function main() {
   r = await json('DELETE', `/admin/turmas/${turmaId}/arquivos/${arquivoId}`, null, tokenAdmin);
   assert.strictEqual(r.status, 204, JSON.stringify(r.body));
   r = await json('GET', '/arquivos', null, tokenLider);
-  assert.strictEqual(r.body.length, 0); // sumiu da turma original
+  assert.strictEqual(r.body.length, 1); // arquivoId sumiu, mas sobra a cópia do arquivoId2 (transferir manteve a cópia aqui)
   r = await json('GET', '/arquivos', null, outroLiderTokenTmp);
   assert.strictEqual(r.body.length, 1); // mas continua na turma vinculada depois
 
@@ -304,7 +327,7 @@ async function main() {
   r = await json('DELETE', `/admin/turmas/${terceiraTurma.body.id}/arquivos/${arquivoId}`, null, tokenAdmin);
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/arquivos', null, tokenLider);
-  assert.strictEqual(r.body.length, 0);
+  assert.strictEqual(r.body.length, 1); // arquivoId foi de vez; a cópia do arquivoId2 continua
 
   console.log('→ admin monta a trilha de desafios da turma (título/prazo/pontos)');
   r = await json('POST', `/admin/turmas/${turmaId}/desafios`, { titulo: 'Montar minha equipe', descricao: 'Cadastrar liderados.', secaoAlvo: 'liderados', prazo: '2099-01-01', pontos: 20, ordem: 0 }, tokenAdmin);
