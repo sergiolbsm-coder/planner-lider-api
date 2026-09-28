@@ -127,6 +127,22 @@ router.put('/lideres/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
+// Redefine a senha de um líder já cadastrado — usado quando ele esquece a
+// senha ou o admin quer trocar o acesso; não exige a senha antiga porque
+// quem chama essa rota já é o administrador autenticado.
+router.put('/lideres/:id/senha', async (req, res) => {
+  const { senha } = req.body || {};
+  if (!senha || senha.length < 6) return res.status(400).json({ erro: 'A senha precisa ter pelo menos 6 caracteres.' });
+
+  const senhaHash = await bcrypt.hash(senha, 10);
+  const { rows } = await pool.query(
+    `UPDATE users SET senha_hash = $1 WHERE id = $2 AND role = 'lider' RETURNING id`,
+    [senhaHash, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
+  res.status(204).end();
+});
+
 // ---- Trilha de Desafios da turma (template — só o admin edita) ----
 router.get('/turmas/:turmaId/desafios', async (req, res) => {
   const { rows } = await pool.query(

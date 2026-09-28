@@ -405,6 +405,22 @@ async function main() {
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.turma_id, turmaId);
 
+  console.log('→ admin redefine a senha de um líder já cadastrado');
+  r = await json('PUT', `/admin/lideres/${outroLider.body.id}/senha`, { senha: 'novaSenha123' }, tokenAdmin);
+  assert.strictEqual(r.status, 204, JSON.stringify(r.body));
+  r = await json('POST', '/auth/login', { email: 'outra@teste.com', senha: '123456' });
+  assert.strictEqual(r.status, 401, 'senha antiga não deveria funcionar mais'); // outra@teste.com não tem conta duplicada, então isso é mesmo credencial inválida
+  r = await json('POST', '/auth/login', { email: 'outra@teste.com', senha: 'novaSenha123' });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+
+  console.log('→ redefinir senha com menos de 6 caracteres é rejeitado');
+  r = await json('PUT', `/admin/lideres/${outroLider.body.id}/senha`, { senha: '123' }, tokenAdmin);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ redefinir senha de líder inexistente devolve 404');
+  r = await json('PUT', `/admin/lideres/00000000-0000-0000-0000-000000000000/senha`, { senha: '123456' }, tokenAdmin);
+  assert.strictEqual(r.status, 404);
+
   console.log('→ plano de gestão: leitura antes de salvar vem vazia, sem criar linha');
   r = await json('GET', '/plano-gestao', null, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
