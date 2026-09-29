@@ -210,6 +210,26 @@ CREATE TABLE IF NOT EXISTS plano_acao_itens (
   ordem INT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_plano_acao_lider_id ON plano_acao_itens(lider_id);
+-- Plano de Ação evoluiu pro modelo "Projetos/Iniciativas" (planejamento) +
+-- "Acompanhamento de Planos por Equipe" (execução) do material oficial:
+-- cada linha pode se vincular a um responsável (liderado ou o próprio
+-- líder, mesmo padrão de atividades.responsavel_eu/responsavel_id) e a uma
+-- meta, além de ganhar os campos de planejamento (equipe/áreas, recursos,
+-- checkpoints) e de acompanhamento (datas, status, lições aprendidas).
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS responsavel_eu BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS responsavel_id UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS meta_id UUID REFERENCES metas(id) ON DELETE SET NULL;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS equipe_areas TEXT;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS recursos TEXT;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS checkpoints TEXT;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS data_inicio DATE;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS data_fim DATE;
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'novo';
+ALTER TABLE plano_acao_itens DROP CONSTRAINT IF EXISTS plano_acao_itens_status_check;
+ALTER TABLE plano_acao_itens ADD CONSTRAINT plano_acao_itens_status_check CHECK (status IN ('novo', 'andamento', 'bloqueado', 'concluido'));
+ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS licoes_aprendidas TEXT;
+CREATE INDEX IF NOT EXISTS idx_plano_acao_responsavel_id ON plano_acao_itens(responsavel_id);
+CREATE INDEX IF NOT EXISTS idx_plano_acao_meta_id ON plano_acao_itens(meta_id);
 
 -- Vínculo da atividade com o planejamento: além de uma Meta/Indicador (já
 -- existia via meta_id), a atividade agora também pode declarar que está

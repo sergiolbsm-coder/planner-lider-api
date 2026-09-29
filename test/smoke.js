@@ -226,6 +226,40 @@ async function main() {
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   assert.strictEqual(r.body.tipo_vinculo, 'bsc');
 
+  console.log('→ criar um projeto/iniciativa completo (Plano de Ação / Projetos)');
+  r = await json('POST', '/plano-acao', {
+    acao: 'Reduzir tempo de resposta ao cliente', responsavelId: liderado.id, metaId: meta.id,
+    equipeAreas: 'Atendimento', recursos: 'Treinamento + novo CRM', checkpoints: 'Revisão quinzenal',
+    dataInicio: '2026-10-01', dataFim: '2026-12-31', status: 'andamento', licoesAprendidas: '',
+  }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const projeto = r.body;
+  assert.strictEqual(projeto.responsavel_id, liderado.id);
+  assert.strictEqual(projeto.meta_id, meta.id);
+  assert.strictEqual(projeto.status, 'andamento');
+
+  console.log('→ PUT parcial só do campo de Acompanhamento não apaga os campos de Projetos/Iniciativas');
+  r = await json('PUT', `/plano-acao/${projeto.id}`, { status: 'concluido', licoesAprendidas: 'CRM novo reduziu o tempo em 40%.' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.status, 'concluido');
+  assert.strictEqual(r.body.equipe_areas, 'Atendimento'); // não foi reenviado, tem que continuar
+  assert.strictEqual(r.body.responsavel_id, liderado.id); // idem
+
+  console.log('→ limpar o responsável e a meta explicitamente (vazio é um valor válido, não "campo omitido")');
+  r = await json('PUT', `/plano-acao/${projeto.id}`, { responsavelId: '', metaId: '' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.responsavel_id, null);
+  assert.strictEqual(r.body.meta_id, null);
+  assert.strictEqual(r.body.checkpoints, 'Revisão quinzenal'); // continua intacto
+
+  console.log('→ responsável de outro líder é rejeitado no Plano de Ação');
+  r = await json('PUT', `/plano-acao/${projeto.id}`, { responsavelId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ status inválido no Plano de Ação é rejeitado');
+  r = await json('POST', '/plano-acao', { acao: 'Teste', status: 'inexistente' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
   console.log('→ vincular atividade a um item do Plano de Ação');
   r = await json('GET', '/plano-acao', null, tokenLider);
   assert.strictEqual(r.status, 200);
