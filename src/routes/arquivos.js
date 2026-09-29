@@ -39,8 +39,12 @@ router.get('/:id/download', requireAuth, async (req, res) => {
   if (!rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
 
   const arquivo = rows[0];
+  // filename simples (ASCII, pro navegador que não lê filename*) + filename*
+  // no formato RFC 5987 (nome com acento/emoji correto) — sem isso alguns
+  // navegadores salvavam o arquivo com "%20"/"%C3%A7" literais no nome.
+  const nomeAscii = arquivo.nome.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
   res.setHeader('Content-Type', arquivo.tipo_mime);
-  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(arquivo.nome)}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${nomeAscii}"; filename*=UTF-8''${encodeURIComponent(arquivo.nome)}`);
   res.send(arquivo.conteudo);
 });
 
