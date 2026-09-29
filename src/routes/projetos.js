@@ -4,12 +4,7 @@ const { requireAuth, requireLider } = require('../middleware/auth');
 
 const router = express.Router();
 
-async function validarMeta(metaId, liderId) {
-  if (!metaId) return null;
-  const { rows } = await pool.query('SELECT id FROM metas WHERE id = $1 AND lider_id = $2', [metaId, liderId]);
-  if (!rows.length) throw Object.assign(new Error('Meta inválida.'), { status: 400 });
-  return metaId;
-}
+const STATUS = ['novo', 'andamento', 'bloqueado', 'concluido'];
 
 // Mesmo padrão de atividades/plano_acao/matriz: responsável pode ser o
 // próprio líder ('eu'), um liderado da equipe, ou nenhum (string vazia/omitido).
@@ -27,14 +22,14 @@ router.get('/', requireAuth, requireLider, async (req, res) => {
 });
 
 router.post('/', requireAuth, requireLider, async (req, res) => {
-  const { nome, metaId, responsavelId, recursos, checkpoints, ordem } = req.body || {};
+  const { nome, objetivo, responsavelId, prazo, impedimentos, status, resultadoEsperado, ordem } = req.body || {};
+  if (status && !STATUS.includes(status)) return res.status(400).json({ erro: 'Status inválido.' });
   try {
-    const meta_id = await validarMeta(metaId, req.user.id);
     const resp = await resolverResponsavel(responsavelId, req.user.id);
     const { rows } = await pool.query(
-      `INSERT INTO projetos_iniciativas (lider_id, nome, meta_id, responsavel_eu, responsavel_id, recursos, checkpoints, ordem)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [req.user.id, nome || null, meta_id, resp.responsavel_eu, resp.responsavel_id, recursos || null, checkpoints || null, ordem || 0]
+      `INSERT INTO projetos_iniciativas (lider_id, nome, objetivo, responsavel_eu, responsavel_id, prazo, impedimentos, status, resultado_esperado, ordem)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [req.user.id, nome || null, objetivo || null, resp.responsavel_eu, resp.responsavel_id, prazo || null, impedimentos || null, status || 'novo', resultadoEsperado || null, ordem || 0]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -43,7 +38,7 @@ router.post('/', requireAuth, requireLider, async (req, res) => {
   }
 });
 
-// PUT parcial via COALESCE — metaId/responsavelId usam hasOwnProperty porque
+// PUT parcial via COALESCE — responsavelId/prazo usam hasOwnProperty porque
 // limpar o vínculo é uma ação válida, diferente de "campo omitido" (mesmo
 // padrão de plano_acao_itens/atividades/matriz).
 router.put('/:id', requireAuth, requireLider, async (req, res) => {
@@ -52,12 +47,10 @@ router.put('/:id', requireAuth, requireLider, async (req, res) => {
   const atual = dono.rows[0];
 
   const body = req.body || {};
+  if (body.status !== undefined && body.status && !STATUS.includes(body.status)) {
+    return res.status(400).json({ erro: 'Status inválido.' });
+  }
   try {
-    let metaIdFinal = atual.meta_id;
-    if (Object.prototype.hasOwnProperty.call(body, 'metaId')) {
-      metaIdFinal = await validarMeta(body.metaId, req.user.id);
-    }
-
     let responsavelEu = atual.responsavel_eu;
     let responsavelIdFinal = atual.responsavel_id;
     if (Object.prototype.hasOwnProperty.call(body, 'responsavelId')) {
@@ -66,13 +59,16 @@ router.put('/:id', requireAuth, requireLider, async (req, res) => {
       responsavelIdFinal = resp.responsavel_id;
     }
 
+    const prazoFinal = Object.prototype.hasOwnProperty.call(body, 'prazo') ? (body.prazo || null) : atual.prazo;
+
     const { rows } = await pool.query(
       `UPDATE projetos_iniciativas SET
-         nome = COALESCE($1, nome), meta_id = $2,
-         responsavel_eu = $3, responsavel_id = $4,
-         recursos = COALESCE($5, recursos), checkpoints = COALESCE($6, checkpoints)
-       WHERE id = $7 AND lider_id = $8 RETURNING *`,
-      [body.nome, metaIdFinal, responsavelEu, responsavelIdFinal, body.recursos, body.checkpoints, req.params.id, req.user.id]
+         nome = COALESCE($1, nome), objetivo = COALESCE($2, objetivo),
+         responsavel_eu = $3, responsavel_id = $4, prazo = $5,
+         impedimentos = COALESCE($6, impedimentos), status = COALESCE($7, status),
+         resultado_esperado = COALESCE($8, resultado_esperado)
+       WHERE id = $9 AND lider_id = $10 RETURNING *`,
+      [body.nome, body.objetivo, responsavelEu, responsavelIdFinal, prazoFinal, body.impedimentos, body.status, body.resultadoEsperado, req.params.id, req.user.id]
     );
     res.json(rows[0]);
   } catch (err) {

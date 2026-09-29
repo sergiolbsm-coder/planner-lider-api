@@ -226,33 +226,36 @@ async function main() {
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   assert.strictEqual(r.body.tipo_vinculo, 'bsc');
 
-  console.log('→ criar um Projeto/Iniciativa (entidade própria, separada do Plano de Ação)');
+  console.log('→ criar um Projeto/Iniciativa no modelo do material impresso (objetivo, prazo, impedimentos, status, resultado esperado)');
   r = await json('POST', '/projetos', {
-    nome: 'Reduzir tempo de resposta ao cliente', metaId: meta.id,
-    responsavelId: liderado.id, recursos: 'Treinamento + novo CRM', checkpoints: 'Revisão quinzenal',
+    nome: 'Reduzir tempo de resposta ao cliente', objetivo: 'Cair de 24h pra 4h de tempo médio de resposta',
+    responsavelId: liderado.id, prazo: '2026-12-31', impedimentos: 'Falta de headcount no time', status: 'andamento',
+    resultadoEsperado: 'NPS de atendimento acima de 80',
   }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const projeto = r.body;
-  assert.strictEqual(projeto.meta_id, meta.id);
+  assert.strictEqual(projeto.objetivo, 'Cair de 24h pra 4h de tempo médio de resposta');
   assert.strictEqual(projeto.responsavel_id, liderado.id);
   assert.strictEqual(projeto.responsavel_eu, false);
+  assert.strictEqual(String(projeto.prazo).slice(0, 10), '2026-12-31');
+  assert.strictEqual(projeto.status, 'andamento');
 
   console.log('→ PUT parcial de Projeto não apaga os outros campos');
-  r = await json('PUT', `/projetos/${projeto.id}`, { checkpoints: 'Revisão semanal' }, tokenLider);
+  r = await json('PUT', `/projetos/${projeto.id}`, { status: 'bloqueado' }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-  assert.strictEqual(r.body.checkpoints, 'Revisão semanal');
-  assert.strictEqual(r.body.recursos, 'Treinamento + novo CRM'); // não foi reenviado, tem que continuar
+  assert.strictEqual(r.body.status, 'bloqueado');
+  assert.strictEqual(r.body.impedimentos, 'Falta de headcount no time'); // não foi reenviado, tem que continuar
   assert.strictEqual(r.body.responsavel_id, liderado.id); // idem
 
-  console.log('→ limpar a meta e o responsável do projeto explicitamente (vazio é válido, não "campo omitido")');
-  r = await json('PUT', `/projetos/${projeto.id}`, { metaId: '', responsavelId: '' }, tokenLider);
+  console.log('→ limpar o prazo e o responsável do projeto explicitamente (vazio é válido, não "campo omitido")');
+  r = await json('PUT', `/projetos/${projeto.id}`, { prazo: '', responsavelId: '' }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-  assert.strictEqual(r.body.meta_id, null);
+  assert.strictEqual(r.body.prazo, null);
   assert.strictEqual(r.body.responsavel_id, null);
   assert.strictEqual(r.body.responsavel_eu, false);
 
-  console.log('→ meta de outro líder é rejeitada no Projeto');
-  r = await json('POST', '/projetos', { nome: 'Outro projeto', metaId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
+  console.log('→ status inválido no Projeto é rejeitado');
+  r = await json('POST', '/projetos', { nome: 'Outro projeto', status: 'inexistente' }, tokenLider);
   assert.strictEqual(r.status, 400);
 
   console.log('→ responsável de outro líder é rejeitado no Projeto');

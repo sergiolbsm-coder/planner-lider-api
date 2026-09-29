@@ -267,6 +267,18 @@ ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS responsavel_eu BOOLEAN
 ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS responsavel_id UUID REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_projetos_responsavel_id ON projetos_iniciativas(responsavel_id);
 
+-- Tela ajustada pro modelo "Estrutura de Acompanhamento de Projetos e
+-- Iniciativas" do material impresso: Objetivo, Prazo, Impedimentos, Status,
+-- Resultado Esperado. recursos/checkpoints/meta_id ficam sem uso na tela
+-- (sem migração destrutiva), status usa o mesmo domínio de plano_acao_itens.
+ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS objetivo TEXT;
+ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS prazo DATE;
+ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS impedimentos TEXT;
+ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'novo';
+ALTER TABLE projetos_iniciativas DROP CONSTRAINT IF EXISTS projetos_iniciativas_status_check;
+ALTER TABLE projetos_iniciativas ADD CONSTRAINT projetos_iniciativas_status_check CHECK (status IN ('novo', 'andamento', 'bloqueado', 'concluido'));
+ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS resultado_esperado TEXT;
+
 -- Vínculo da atividade com o planejamento: além de uma Meta/Indicador (já
 -- existia via meta_id), a atividade agora também pode declarar que está
 -- contribuindo especificamente pra um OKR ou uma perspectiva do BSC — ambos
