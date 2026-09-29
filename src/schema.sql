@@ -260,6 +260,13 @@ CREATE TABLE IF NOT EXISTS projetos_iniciativas (
 CREATE INDEX IF NOT EXISTS idx_projetos_lider_id ON projetos_iniciativas(lider_id);
 CREATE INDEX IF NOT EXISTS idx_projetos_meta_id ON projetos_iniciativas(meta_id);
 
+-- equipe_areas foi substituído por um responsável estruturado (mesmo padrão
+-- de atividades/plano_acao/matriz) — a coluna antiga fica sem uso, sem
+-- migração destrutiva.
+ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS responsavel_eu BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE projetos_iniciativas ADD COLUMN IF NOT EXISTS responsavel_id UUID REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_projetos_responsavel_id ON projetos_iniciativas(responsavel_id);
+
 -- Vínculo da atividade com o planejamento: além de uma Meta/Indicador (já
 -- existia via meta_id), a atividade agora também pode declarar que está
 -- contribuindo especificamente pra um OKR ou uma perspectiva do BSC — ambos

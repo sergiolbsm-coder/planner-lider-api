@@ -229,26 +229,34 @@ async function main() {
   console.log('→ criar um Projeto/Iniciativa (entidade própria, separada do Plano de Ação)');
   r = await json('POST', '/projetos', {
     nome: 'Reduzir tempo de resposta ao cliente', metaId: meta.id,
-    equipeAreas: 'Atendimento', recursos: 'Treinamento + novo CRM', checkpoints: 'Revisão quinzenal',
+    responsavelId: liderado.id, recursos: 'Treinamento + novo CRM', checkpoints: 'Revisão quinzenal',
   }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const projeto = r.body;
   assert.strictEqual(projeto.meta_id, meta.id);
-  assert.strictEqual(projeto.equipe_areas, 'Atendimento');
+  assert.strictEqual(projeto.responsavel_id, liderado.id);
+  assert.strictEqual(projeto.responsavel_eu, false);
 
   console.log('→ PUT parcial de Projeto não apaga os outros campos');
   r = await json('PUT', `/projetos/${projeto.id}`, { checkpoints: 'Revisão semanal' }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.checkpoints, 'Revisão semanal');
   assert.strictEqual(r.body.recursos, 'Treinamento + novo CRM'); // não foi reenviado, tem que continuar
+  assert.strictEqual(r.body.responsavel_id, liderado.id); // idem
 
-  console.log('→ limpar a meta do projeto explicitamente (vazio é válido, não "campo omitido")');
-  r = await json('PUT', `/projetos/${projeto.id}`, { metaId: '' }, tokenLider);
+  console.log('→ limpar a meta e o responsável do projeto explicitamente (vazio é válido, não "campo omitido")');
+  r = await json('PUT', `/projetos/${projeto.id}`, { metaId: '', responsavelId: '' }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.meta_id, null);
+  assert.strictEqual(r.body.responsavel_id, null);
+  assert.strictEqual(r.body.responsavel_eu, false);
 
   console.log('→ meta de outro líder é rejeitada no Projeto');
   r = await json('POST', '/projetos', { nome: 'Outro projeto', metaId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ responsável de outro líder é rejeitado no Projeto');
+  r = await json('PUT', `/projetos/${projeto.id}`, { responsavelId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
   assert.strictEqual(r.status, 400);
 
   console.log('→ criar um item de Plano de Ação, independente (não puxa nome/campos do Projeto)');
