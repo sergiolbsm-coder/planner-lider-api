@@ -146,6 +146,14 @@ CREATE TABLE IF NOT EXISTS matriz_itens (
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_matriz_lider_id ON matriz_itens(lider_id);
+-- Matriz de Prioridade passou a admitir cadastro por liderado (mesmo padrão
+-- responsavel_eu/responsavel_id de atividades e plano_acao_itens), pro líder
+-- conseguir ver tanto a matriz de cada pessoa quanto a visão agregada da
+-- área inteira. Default responsavel_eu=true preserva os itens já existentes
+-- como sendo do próprio líder.
+ALTER TABLE matriz_itens ADD COLUMN IF NOT EXISTS responsavel_eu BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE matriz_itens ADD COLUMN IF NOT EXISTS responsavel_id UUID REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_matriz_responsavel_id ON matriz_itens(responsavel_id);
 
 -- Diário de Bordo — registros do dia (observação ou feedback formal).
 CREATE TABLE IF NOT EXISTS diario_registros (
@@ -230,6 +238,27 @@ ALTER TABLE plano_acao_itens ADD CONSTRAINT plano_acao_itens_status_check CHECK 
 ALTER TABLE plano_acao_itens ADD COLUMN IF NOT EXISTS licoes_aprendidas TEXT;
 CREATE INDEX IF NOT EXISTS idx_plano_acao_responsavel_id ON plano_acao_itens(responsavel_id);
 CREATE INDEX IF NOT EXISTS idx_plano_acao_meta_id ON plano_acao_itens(meta_id);
+
+-- Projetos/Iniciativas — planejamento (Passo 5, item 1 do material: nome,
+-- meta vinculada, equipe/áreas, recursos, checkpoints). Virou uma entidade
+-- própria, separada do Plano de Ação: antes as duas telas ("Projetos/
+-- Iniciativas" e "Acompanhamento") editavam a MESMA linha de
+-- plano_acao_itens, dando a impressão de que o Plano de Ação era "puxado"
+-- dos projetos — agora são duas listas independentes, sem vínculo 1:1
+-- obrigatório entre uma coisa e outra.
+CREATE TABLE IF NOT EXISTS projetos_iniciativas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  nome TEXT,
+  meta_id UUID REFERENCES metas(id) ON DELETE SET NULL,
+  equipe_areas TEXT,
+  recursos TEXT,
+  checkpoints TEXT,
+  ordem INT NOT NULL DEFAULT 0,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_projetos_lider_id ON projetos_iniciativas(lider_id);
+CREATE INDEX IF NOT EXISTS idx_projetos_meta_id ON projetos_iniciativas(meta_id);
 
 -- Vínculo da atividade com o planejamento: além de uma Meta/Indicador (já
 -- existia via meta_id), a atividade agora também pode declarar que está

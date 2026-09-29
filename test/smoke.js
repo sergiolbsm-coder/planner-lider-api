@@ -226,38 +226,82 @@ async function main() {
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   assert.strictEqual(r.body.tipo_vinculo, 'bsc');
 
-  console.log('→ criar um projeto/iniciativa completo (Plano de Ação / Projetos)');
-  r = await json('POST', '/plano-acao', {
-    acao: 'Reduzir tempo de resposta ao cliente', responsavelId: liderado.id, metaId: meta.id,
+  console.log('→ criar um Projeto/Iniciativa (entidade própria, separada do Plano de Ação)');
+  r = await json('POST', '/projetos', {
+    nome: 'Reduzir tempo de resposta ao cliente', metaId: meta.id,
     equipeAreas: 'Atendimento', recursos: 'Treinamento + novo CRM', checkpoints: 'Revisão quinzenal',
-    dataInicio: '2026-10-01', dataFim: '2026-12-31', status: 'andamento', licoesAprendidas: '',
   }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const projeto = r.body;
-  assert.strictEqual(projeto.responsavel_id, liderado.id);
   assert.strictEqual(projeto.meta_id, meta.id);
-  assert.strictEqual(projeto.status, 'andamento');
+  assert.strictEqual(projeto.equipe_areas, 'Atendimento');
 
-  console.log('→ PUT parcial só do campo de Acompanhamento não apaga os campos de Projetos/Iniciativas');
-  r = await json('PUT', `/plano-acao/${projeto.id}`, { status: 'concluido', licoesAprendidas: 'CRM novo reduziu o tempo em 40%.' }, tokenLider);
+  console.log('→ PUT parcial de Projeto não apaga os outros campos');
+  r = await json('PUT', `/projetos/${projeto.id}`, { checkpoints: 'Revisão semanal' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.checkpoints, 'Revisão semanal');
+  assert.strictEqual(r.body.recursos, 'Treinamento + novo CRM'); // não foi reenviado, tem que continuar
+
+  console.log('→ limpar a meta do projeto explicitamente (vazio é válido, não "campo omitido")');
+  r = await json('PUT', `/projetos/${projeto.id}`, { metaId: '' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.meta_id, null);
+
+  console.log('→ meta de outro líder é rejeitada no Projeto');
+  r = await json('POST', '/projetos', { nome: 'Outro projeto', metaId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ criar um item de Plano de Ação, independente (não puxa nome/campos do Projeto)');
+  r = await json('POST', '/plano-acao', {
+    acao: 'Ligar pros 10 clientes que mais reclamaram', responsavelId: liderado.id, metaId: meta.id,
+    dataInicio: '2026-10-01', dataFim: '2026-12-31', status: 'andamento', licoesAprendidas: '',
+  }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const itemAcao = r.body;
+  assert.strictEqual(itemAcao.responsavel_id, liderado.id);
+  assert.strictEqual(itemAcao.meta_id, meta.id);
+  assert.strictEqual(itemAcao.status, 'andamento');
+
+  console.log('→ PUT parcial do Plano de Ação não apaga os outros campos');
+  r = await json('PUT', `/plano-acao/${itemAcao.id}`, { status: 'concluido', licoesAprendidas: 'Reduziu reclamações em 40%.' }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.status, 'concluido');
-  assert.strictEqual(r.body.equipe_areas, 'Atendimento'); // não foi reenviado, tem que continuar
-  assert.strictEqual(r.body.responsavel_id, liderado.id); // idem
+  assert.strictEqual(r.body.responsavel_id, liderado.id); // não foi reenviado, tem que continuar
 
-  console.log('→ limpar o responsável e a meta explicitamente (vazio é um valor válido, não "campo omitido")');
-  r = await json('PUT', `/plano-acao/${projeto.id}`, { responsavelId: '', metaId: '' }, tokenLider);
+  console.log('→ limpar o responsável e a meta do Plano de Ação explicitamente');
+  r = await json('PUT', `/plano-acao/${itemAcao.id}`, { responsavelId: '', metaId: '' }, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.responsavel_id, null);
   assert.strictEqual(r.body.meta_id, null);
-  assert.strictEqual(r.body.checkpoints, 'Revisão quinzenal'); // continua intacto
 
   console.log('→ responsável de outro líder é rejeitado no Plano de Ação');
-  r = await json('PUT', `/plano-acao/${projeto.id}`, { responsavelId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
+  r = await json('PUT', `/plano-acao/${itemAcao.id}`, { responsavelId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
   assert.strictEqual(r.status, 400);
 
   console.log('→ status inválido no Plano de Ação é rejeitado');
   r = await json('POST', '/plano-acao', { acao: 'Teste', status: 'inexistente' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ Matriz de Prioridade: cadastro por liderado (responsável) e visão agregada da área');
+  r = await json('POST', '/matriz', { titulo: 'Revisar script de atendimento', resultado: 'alto', esforco: 'facil', responsavelId: liderado.id }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.responsavel_id, liderado.id);
+  assert.strictEqual(r.body.responsavel_eu, false);
+  const itemMatrizLiderado = r.body;
+
+  r = await json('POST', '/matriz', { titulo: 'Redesenhar processo de onboarding', resultado: 'alto', esforco: 'dificil', responsavelId: 'eu' }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.responsavel_eu, true);
+  assert.strictEqual(r.body.responsavel_id, null);
+
+  r = await json('GET', '/matriz', null, tokenLider);
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.length, 2); // a "visão da área" é só listar tudo — filtro é feito no front
+  assert.ok(r.body.some(m => m.responsavel_id === liderado.id));
+  assert.ok(r.body.some(m => m.responsavel_eu === true));
+
+  console.log('→ responsável inválido na Matriz é rejeitado');
+  r = await json('PUT', `/matriz/${itemMatrizLiderado.id}`, { responsavelId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
   assert.strictEqual(r.status, 400);
 
   console.log('→ vincular atividade a um item do Plano de Ação');

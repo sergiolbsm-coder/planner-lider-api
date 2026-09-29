@@ -32,6 +32,7 @@ app.use('/matriz', require('./routes/matriz'));
 app.use('/diario', require('./routes/diario'));
 app.use('/rotina', require('./routes/rotina'));
 app.use('/plano-acao', require('./routes/planoAcao'));
+app.use('/projetos', require('./routes/projetos'));
 app.use('/dashboard-config', require('./routes/dashboardConfig'));
 app.use('/autoavaliacoes', require('./routes/autoavaliacoes'));
 app.use('/arquivos', require('./routes/arquivos'));
