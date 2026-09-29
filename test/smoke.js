@@ -146,6 +146,25 @@ async function main() {
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const liderado = r.body;
 
+  console.log('→ criar liderado só com nome (e-mail/senha de acesso agora são opcionais)');
+  r = await json('POST', '/liderados', { nome: 'Beatriz Lima', cargo: 'Estagiária' }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.email, null);
+  const lideradoSemAcesso = r.body;
+
+  console.log('→ enviar só o e-mail sem a senha (ou vice-versa) é rejeitado');
+  r = await json('POST', '/liderados', { nome: 'Sem Senha', email: 'semsenha@teste.com' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+  r = await json('POST', '/liderados', { nome: 'Sem Email', senha: '123456' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ liberar o acesso depois, via PUT, com e-mail e senha juntos');
+  r = await json('PUT', `/liderados/${lideradoSemAcesso.id}`, { email: 'beatriz@teste.com', senha: '123456' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.email, 'beatriz@teste.com');
+  r = await json('POST', '/auth/login', { email: 'beatriz@teste.com', senha: '123456' });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+
   console.log('→ login liderado');
   r = await json('POST', '/auth/login', { email: 'joao@teste.com', senha: '123456' });
   assert.strictEqual(r.status, 200);
@@ -320,8 +339,9 @@ async function main() {
   // 0 ou 1 pela diferença de fuso entre a data inserida (UTC) e o CURRENT_DATE
   // interno do pg-mem — no Postgres de verdade isso é sempre 0 aqui, é só o mock.
   assert.ok(r.body.diasSemReuniao === 0 || r.body.diasSemReuniao === 1, `esperado 0 ou 1, veio ${r.body.diasSemReuniao}`);
-  assert.strictEqual(r.body.porLiderado.length, 1);
-  assert.strictEqual(r.body.porLiderado[0].total, 5);
+  assert.strictEqual(r.body.porLiderado.length, 2); // João Pedro + Beatriz Lima (cadastrada sem acesso acima)
+  assert.strictEqual(r.body.porLiderado.find(p => p.id === liderado.id).total, 5);
+  assert.strictEqual(r.body.porLiderado.find(p => p.id === lideradoSemAcesso.id).total, 0);
 
   console.log('→ autoavaliação mensal: mês novo vem vazio, upsert grava e não duplica');
   const mesRef = hoje.slice(0, 7);

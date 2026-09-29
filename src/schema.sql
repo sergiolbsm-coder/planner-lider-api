@@ -49,6 +49,13 @@ CREATE INDEX IF NOT EXISTS idx_users_turma_id ON users(turma_id);
 -- pela existência do papel, não pelo e-mail).
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_turma ON users(email, turma_id);
+-- E-mail/senha de acesso do liderado passaram a ser opcionais no cadastro —
+-- o líder pode registrar só o perfil (nome, cargo, etc.) e liberar o acesso
+-- depois. Continuam obrigatórios pra admin/líder (aplicado na camada da
+-- aplicação, não aqui) — e o índice único acima já não se importa com
+-- múltiplos e-mails NULL (o Postgres nunca considera dois NULLs iguais).
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN senha_hash DROP NOT NULL;
 
 -- Perfil estendido do liderado — bloco "Conhecer o Liderado" do Diário de Bordo.
 CREATE TABLE IF NOT EXISTS perfis_liderado (

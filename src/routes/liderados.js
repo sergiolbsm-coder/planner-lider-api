@@ -22,28 +22,35 @@ router.get('/', requireAuth, requireLider, async (req, res) => {
   res.json(rows);
 });
 
-// Líder: cadastra um novo liderado (cria login dele também).
+// Líder: cadastra um novo liderado. E-mail/senha de acesso são opcionais —
+// dá pra cadastrar só o perfil e liberar o acesso depois (via PUT) — mas se
+// um dos dois vier, o outro é obrigatório junto (não existe login pela metade).
 router.post('/', requireAuth, requireLider, async (req, res) => {
   const { nome, email, senha, cargo, dataInicio, perfilComportamental, habilidades, expectativas, metasTexto, desenvolvimento, obs } = req.body || {};
-  if (!nome || !email || !senha) {
-    return res.status(400).json({ erro: 'Informe nome, e-mail e senha do liderado.' });
+  if (!nome) {
+    return res.status(400).json({ erro: 'Informe o nome do liderado.' });
   }
-  if (senha.length < 6) {
+  if ((email && !senha) || (!email && senha)) {
+    return res.status(400).json({ erro: 'Informe e-mail e senha de acesso juntos, ou deixe os dois em branco pra liberar o acesso depois.' });
+  }
+  if (senha && senha.length < 6) {
     return res.status(400).json({ erro: 'A senha precisa ter pelo menos 6 caracteres.' });
   }
 
-  const emailNormalizado = String(email).trim().toLowerCase();
+  const emailNormalizado = email ? String(email).trim().toLowerCase() : null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    const existente = await client.query('SELECT id FROM users WHERE email = $1', [emailNormalizado]);
-    if (existente.rows.length) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ erro: 'Já existe uma conta com este e-mail.' });
+    if (emailNormalizado) {
+      const existente = await client.query('SELECT id FROM users WHERE email = $1', [emailNormalizado]);
+      if (existente.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ erro: 'Já existe uma conta com este e-mail.' });
+      }
     }
 
-    const senhaHash = await bcrypt.hash(senha, 10);
+    const senhaHash = senha ? await bcrypt.hash(senha, 10) : null;
     const { rows: userRows } = await client.query(
       `INSERT INTO users (role, nome, email, senha_hash, lider_id, cargo)
        VALUES ('liderado', $1, $2, $3, $4, $5)
@@ -71,12 +78,30 @@ router.post('/', requireAuth, requireLider, async (req, res) => {
 });
 
 // Líder: atualiza cadastro + perfil (inclui os campos do Diário de Bordo).
+// Também é aqui que dá pra liberar o acesso de um liderado cadastrado só com
+// o perfil: mandando email + senha juntos (os dois precisam vir juntos).
 router.put('/:id', requireAuth, requireLider, async (req, res) => {
   const { id } = req.params;
   const dono = await pool.query('SELECT id FROM users WHERE id = $1 AND lider_id = $2', [id, req.user.id]);
   if (!dono.rows.length) return res.status(404).json({ erro: 'Liderado não encontrado.' });
 
-  const { nome, cargo, dataInicio, perfilComportamental, habilidades, expectativas, metasTexto, desenvolvimento, obs, aspiracoes, comportamentos, sentimentos } = req.body || {};
+  const { nome, cargo, email, senha, dataInicio, perfilComportamental, habilidades, expectativas, metasTexto, desenvolvimento, obs, aspiracoes, comportamentos, sentimentos } = req.body || {};
+
+  if (email !== undefined || senha !== undefined) {
+    if (!email || !senha) {
+      return res.status(400).json({ erro: 'Pra liberar o acesso, informe e-mail e senha juntos.' });
+    }
+    if (senha.length < 6) {
+      return res.status(400).json({ erro: 'A senha precisa ter pelo menos 6 caracteres.' });
+    }
+    const emailNormalizado = String(email).trim().toLowerCase();
+    const existente = await pool.query('SELECT id FROM users WHERE email = $1 AND id != $2', [emailNormalizado, id]);
+    if (existente.rows.length) {
+      return res.status(409).json({ erro: 'Já existe uma conta com este e-mail.' });
+    }
+    const senhaHash = await bcrypt.hash(senha, 10);
+    await pool.query('UPDATE users SET email = $1, senha_hash = $2 WHERE id = $3', [emailNormalizado, senhaHash, id]);
+  }
 
   if (nome !== undefined || cargo !== undefined) {
     await pool.query(
