@@ -30,7 +30,7 @@ router.get('/minha-turma', requireAuth, async (req, res) => {
 
 router.get('/:id/download', requireAuth, async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT DISTINCT a.nome, a.tipo_mime, a.tamanho_bytes, a.conteudo FROM arquivos_aula a
+    `SELECT DISTINCT a.nome, a.tipo_mime, a.conteudo FROM arquivos_aula a
      JOIN arquivo_turmas vt ON vt.arquivo_id = a.id
      JOIN users lider ON lider.id = $2 AND lider.turma_id = vt.turma_id
      WHERE a.id = $1`,
@@ -45,10 +45,6 @@ router.get('/:id/download', requireAuth, async (req, res) => {
   const nomeAscii = arquivo.nome.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
   res.setHeader('Content-Type', arquivo.tipo_mime);
   res.setHeader('Content-Disposition', `attachment; filename="${nomeAscii}"; filename*=UTF-8''${encodeURIComponent(arquivo.nome)}`);
-  // Content-Length explícito: sem isso a resposta vai em chunked transfer, e
-  // alguns proxies/conexões lentas cortam downloads binários grandes antes
-  // de terminar sem esse cabeçalho avisando o tamanho total de antemão.
-  res.setHeader('Content-Length', arquivo.tamanho_bytes ?? arquivo.conteudo.length);
   res.send(arquivo.conteudo);
 });
 
