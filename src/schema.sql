@@ -155,6 +155,27 @@ CREATE TABLE IF NOT EXISTS diario_registros (
 );
 CREATE INDEX IF NOT EXISTS idx_diario_liderado_id ON diario_registros(liderado_id);
 CREATE INDEX IF NOT EXISTS idx_diario_lider_id ON diario_registros(lider_id);
+-- Evolução — contraponto positivo da checagem de riscos psicossociais (mesmo
+-- padrão de múltipla escolha), pra registrar também o que está indo bem, não
+-- só os alertas.
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS evolucao TEXT[] NOT NULL DEFAULT '{}';
+-- Feedback formal — 3 ferramentas do material de aula. Cada uma tem seus
+-- próprios campos porque pedem preenchimentos diferentes (Sanduíche é
+-- positivo/melhoria/positivo; Feedforward é + e Delta; Comece-Pare-Continue
+-- são 3 blocos distintos) — misturar tudo em "conversa"/"plano" perderia a
+-- estrutura que a ferramenta escolhida exige.
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS ferramenta_feedback TEXT;
+ALTER TABLE diario_registros DROP CONSTRAINT IF EXISTS diario_registros_ferramenta_feedback_check;
+ALTER TABLE diario_registros ADD CONSTRAINT diario_registros_ferramenta_feedback_check
+  CHECK (ferramenta_feedback IS NULL OR ferramenta_feedback IN ('sanduiche', 'feedforward', 'comece_pare_continue'));
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_sanduiche_positivo1 TEXT;
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_sanduiche_melhoria TEXT;
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_sanduiche_positivo2 TEXT;
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_feedforward_mais TEXT;
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_feedforward_delta TEXT;
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_cpc_comece TEXT;
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_cpc_pare TEXT;
+ALTER TABLE diario_registros ADD COLUMN IF NOT EXISTS fb_cpc_continue TEXT;
 
 -- Dashboard — registro de rotina diária.
 CREATE TABLE IF NOT EXISTS rotina_registros (

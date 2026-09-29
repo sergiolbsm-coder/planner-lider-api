@@ -68,22 +68,48 @@ router.get('/estatisticas', requireAuth, requireLider, async (req, res) => {
   });
 });
 
+const FERRAMENTAS_FEEDBACK = ['sanduiche', 'feedforward', 'comece_pare_continue'];
+
 // Líder: novo registro (observação ou feedback formal).
 router.post('/', requireAuth, requireLider, async (req, res) => {
-  const { liderado_id, tipo, data, riscos, sinais, conversa, plano } = req.body || {};
+  const {
+    liderado_id, tipo, data, riscos, evolucao, sinais, conversa, plano,
+    ferramentaFeedback,
+    fbSanduichePositivo1, fbSanduicheMelhoria, fbSanduichePositivo2,
+    fbFeedforwardMais, fbFeedforwardDelta,
+    fbCpcComece, fbCpcPare, fbCpcContinue,
+  } = req.body || {};
   if (!liderado_id || !data) return res.status(400).json({ erro: 'Informe o liderado e a data.' });
   if (!(await pertenceAoLider(liderado_id, req.user.id))) {
     return res.status(404).json({ erro: 'Liderado não encontrado.' });
   }
   const tipoFinal = tipo === 'feedback' ? 'feedback' : 'observacao';
-  if (!(riscos && riscos.length) && !sinais && !conversa && !plano) {
+  if (ferramentaFeedback && !FERRAMENTAS_FEEDBACK.includes(ferramentaFeedback)) {
+    return res.status(400).json({ erro: 'Ferramenta de feedback inválida.' });
+  }
+
+  const camposFerramenta = [
+    fbSanduichePositivo1, fbSanduicheMelhoria, fbSanduichePositivo2,
+    fbFeedforwardMais, fbFeedforwardDelta, fbCpcComece, fbCpcPare, fbCpcContinue,
+  ];
+  const temAlgo = (riscos && riscos.length) || (evolucao && evolucao.length) || sinais || conversa || plano
+    || camposFerramenta.some(Boolean);
+  if (!temAlgo) {
     return res.status(400).json({ erro: 'Preencha ao menos um campo do registro.' });
   }
 
   const { rows } = await pool.query(
-    `INSERT INTO diario_registros (lider_id, liderado_id, tipo, data, riscos, sinais, conversa, plano)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [req.user.id, liderado_id, tipoFinal, data, riscos || [], sinais || null, conversa || null, plano || null]
+    `INSERT INTO diario_registros (
+       lider_id, liderado_id, tipo, data, riscos, evolucao, sinais, conversa, plano,
+       ferramenta_feedback, fb_sanduiche_positivo1, fb_sanduiche_melhoria, fb_sanduiche_positivo2,
+       fb_feedforward_mais, fb_feedforward_delta, fb_cpc_comece, fb_cpc_pare, fb_cpc_continue
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+    [
+      req.user.id, liderado_id, tipoFinal, data, riscos || [], evolucao || [], sinais || null, conversa || null, plano || null,
+      ferramentaFeedback || null, fbSanduichePositivo1 || null, fbSanduicheMelhoria || null, fbSanduichePositivo2 || null,
+      fbFeedforwardMais || null, fbFeedforwardDelta || null, fbCpcComece || null, fbCpcPare || null, fbCpcContinue || null,
+    ]
   );
   res.status(201).json(rows[0]);
 });
@@ -98,7 +124,10 @@ router.delete('/:id', requireAuth, requireLider, async (req, res) => {
 router.get('/meus-feedbacks', requireAuth, async (req, res) => {
   if (req.user.role !== 'liderado') return res.status(403).json({ erro: 'Apenas contas de liderado usam esta rota.' });
   const { rows } = await pool.query(
-    `SELECT id, data, conversa, plano, criado_em FROM diario_registros
+    `SELECT id, data, conversa, plano, criado_em,
+            ferramenta_feedback, fb_sanduiche_positivo1, fb_sanduiche_melhoria, fb_sanduiche_positivo2,
+            fb_feedforward_mais, fb_feedforward_delta, fb_cpc_comece, fb_cpc_pare, fb_cpc_continue
+     FROM diario_registros
      WHERE liderado_id = $1 AND tipo = 'feedback'
      ORDER BY data DESC`,
     [req.user.id]

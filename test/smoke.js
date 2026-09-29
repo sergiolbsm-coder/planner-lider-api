@@ -249,17 +249,48 @@ async function main() {
   r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'feedback', data: hoje, conversa: 'Conversamos sobre o plano de carreira.', plano: 'Assumir 1 projeto piloto.' }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
 
-  console.log('→ líder lança uma observação com risco psicossocial (não deve vazar pro liderado)');
-  r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'observacao', data: hoje, riscos: ['sobrecarga'], sinais: 'Chegou atrasado duas vezes.' }, tokenLider);
+  console.log('→ líder lança uma observação com risco psicossocial E evolução (não deve vazar pro liderado)');
+  r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'observacao', data: hoje, riscos: ['sobrecarga'], evolucao: ['iniciativa'], sinais: 'Chegou atrasado duas vezes.' }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.deepStrictEqual(r.body.evolucao, ['iniciativa']);
 
-  console.log('→ liderado só vê o feedback formal, nunca a observação/risco interno');
+  console.log('→ líder lança feedback formal com a ferramenta Sanduíche');
+  r = await json('POST', '/diario', {
+    liderado_id: liderado.id, tipo: 'feedback', data: hoje, ferramentaFeedback: 'sanduiche',
+    fbSanduichePositivo1: 'Entrega sempre no prazo.', fbSanduicheMelhoria: 'Comunicar bloqueios mais cedo.', fbSanduichePositivo2: 'Ótima colaboração com o time.',
+  }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.ferramenta_feedback, 'sanduiche');
+  assert.strictEqual(r.body.fb_sanduiche_melhoria, 'Comunicar bloqueios mais cedo.');
+
+  console.log('→ líder lança feedback formal com Feedforward (+ e Delta)');
+  r = await json('POST', '/diario', {
+    liderado_id: liderado.id, tipo: 'feedback', data: hoje, ferramentaFeedback: 'feedforward',
+    fbFeedforwardMais: 'A apresentação pro cliente foi excelente.', fbFeedforwardDelta: 'Preparar um resumo executivo antes da próxima.',
+  }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.ferramenta_feedback, 'feedforward');
+
+  console.log('→ líder lança feedback formal com Comece-Pare-Continue');
+  r = await json('POST', '/diario', {
+    liderado_id: liderado.id, tipo: 'feedback', data: hoje, ferramentaFeedback: 'comece_pare_continue',
+    fbCpcComece: 'Compartilhar status semanal proativamente.', fbCpcPare: 'Deixar decisões pra última hora.', fbCpcContinue: 'Ajudar os colegas mais novos.',
+  }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.ferramenta_feedback, 'comece_pare_continue');
+
+  console.log('→ ferramenta de feedback inválida é rejeitada');
+  r = await json('POST', '/diario', { liderado_id: liderado.id, tipo: 'feedback', data: hoje, ferramentaFeedback: 'not-a-tool' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ liderado só vê o feedback formal (com a ferramenta usada), nunca a observação/risco interno');
   r = await json('GET', '/diario/meus-feedbacks', null, tokenLiderado);
   assert.strictEqual(r.status, 200);
-  assert.strictEqual(r.body.length, 1);
-  assert.strictEqual(r.body[0].conversa, 'Conversamos sobre o plano de carreira.');
+  assert.strictEqual(r.body.length, 4); // o original + sanduiche + feedforward + cpc
+  assert.strictEqual(r.body.find(f => f.ferramenta_feedback === 'sanduiche').fb_sanduiche_positivo1, 'Entrega sempre no prazo.');
   assert.strictEqual('riscos' in r.body[0], false);
   assert.strictEqual('sinais' in r.body[0], false);
+  assert.strictEqual('evolucao' in r.body[0], false);
 
   console.log('→ visão da equipe do líder traz o resumo de todos os liderados');
   r = await json('GET', '/diario/resumo-equipe', null, tokenLider);
@@ -284,13 +315,13 @@ async function main() {
   console.log('→ estatísticas de reuniões contam os registros do diário e apontam o líder sem parar');
   r = await json('GET', '/diario/estatisticas', null, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-  assert.strictEqual(r.body.ultimos7Dias, 2); // o feedback + a observação lançados acima
-  assert.strictEqual(r.body.acumuladoAno, 2);
+  assert.strictEqual(r.body.ultimos7Dias, 5); // 1 observação + 4 feedbacks (sem ferramenta, sanduíche, feedforward, cpc) lançados acima
+  assert.strictEqual(r.body.acumuladoAno, 5);
   // 0 ou 1 pela diferença de fuso entre a data inserida (UTC) e o CURRENT_DATE
   // interno do pg-mem — no Postgres de verdade isso é sempre 0 aqui, é só o mock.
   assert.ok(r.body.diasSemReuniao === 0 || r.body.diasSemReuniao === 1, `esperado 0 ou 1, veio ${r.body.diasSemReuniao}`);
   assert.strictEqual(r.body.porLiderado.length, 1);
-  assert.strictEqual(r.body.porLiderado[0].total, 2);
+  assert.strictEqual(r.body.porLiderado[0].total, 5);
 
   console.log('→ autoavaliação mensal: mês novo vem vazio, upsert grava e não duplica');
   const mesRef = hoje.slice(0, 7);
