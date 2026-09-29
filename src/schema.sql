@@ -78,6 +78,36 @@ CREATE TABLE IF NOT EXISTS metas (
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_metas_lider_id ON metas(lider_id);
+-- Campos do "Painel do Líder" oficial (material de aula): 1. Direção e
+-- Objetivo (porque_importa), 2. Meta e Medição completa (ponto_partida +
+-- frequência, complementando indicador/valor/prazo que já existiam),
+-- 3. Mini-BSC (perspectiva_bsc — uma por meta, não as 4 juntas: o Dashboard
+-- agrega várias metas por perspectiva pra formar a visão de conjunto),
+-- 4. OKR (objetivo + até 3 KRs) e 5. Execução e Acompanhamento. Tudo
+-- opcional — os campos antigos continuam funcionando sozinhos pra quem só
+-- quer uma meta simples.
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS porque_importa TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS ponto_partida TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS frequencia_acompanhamento TEXT;
+ALTER TABLE metas DROP CONSTRAINT IF EXISTS metas_frequencia_acompanhamento_check;
+ALTER TABLE metas ADD CONSTRAINT metas_frequencia_acompanhamento_check
+  CHECK (frequencia_acompanhamento IS NULL OR frequencia_acompanhamento IN ('semanal', 'quinzenal', 'mensal', 'trimestral'));
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS perspectiva_bsc TEXT;
+ALTER TABLE metas DROP CONSTRAINT IF EXISTS metas_perspectiva_bsc_check;
+ALTER TABLE metas ADD CONSTRAINT metas_perspectiva_bsc_check
+  CHECK (perspectiva_bsc IS NULL OR perspectiva_bsc IN ('aprendizado', 'processos', 'clientes', 'financeira'));
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS okr_objetivo TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS okr_kr1 TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS okr_kr2 TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS okr_kr3 TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS acao_prioritaria TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS responsavel_acao TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS evidencia_conclusao TEXT;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS proxima_verificacao DATE;
+ALTER TABLE metas ADD COLUMN IF NOT EXISTS status_execucao TEXT NOT NULL DEFAULT 'no_prazo';
+ALTER TABLE metas DROP CONSTRAINT IF EXISTS metas_status_execucao_check;
+ALTER TABLE metas ADD CONSTRAINT metas_status_execucao_check
+  CHECK (status_execucao IN ('no_prazo', 'atencao', 'atrasado', 'concluido'));
 
 -- Atividades / quadro Kanban.
 CREATE TABLE IF NOT EXISTS atividades (
@@ -152,6 +182,21 @@ CREATE TABLE IF NOT EXISTS plano_acao_itens (
   ordem INT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_plano_acao_lider_id ON plano_acao_itens(lider_id);
+
+-- Vínculo da atividade com o planejamento: além de uma Meta/Indicador (já
+-- existia via meta_id), a atividade agora também pode declarar que está
+-- contribuindo especificamente pra um OKR ou uma perspectiva do BSC — ambos
+-- guardados na própria linha de metas (ver ALTERs de metas acima), então
+-- 'meta'/'okr'/'bsc' reusam o mesmo meta_id, só muda o enquadramento
+-- escolhido pelo líder — ou pra um item do Plano de Ação do Dashboard
+-- (tabela diferente, por isso tem sua própria coluna). Vem depois de
+-- plano_acao_itens no arquivo porque a FK abaixo depende dela já existir.
+ALTER TABLE atividades ADD COLUMN IF NOT EXISTS tipo_vinculo TEXT;
+ALTER TABLE atividades DROP CONSTRAINT IF EXISTS atividades_tipo_vinculo_check;
+ALTER TABLE atividades ADD CONSTRAINT atividades_tipo_vinculo_check
+  CHECK (tipo_vinculo IS NULL OR tipo_vinculo IN ('meta', 'okr', 'bsc', 'plano_acao'));
+ALTER TABLE atividades ADD COLUMN IF NOT EXISTS plano_acao_id UUID REFERENCES plano_acao_itens(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_atividades_plano_acao_id ON atividades(plano_acao_id);
 
 -- Dashboard — configuração (alocação ideal), uma linha por líder.
 -- checklist_erros/checklist_lider são de uma versão anterior (checklist fixo,

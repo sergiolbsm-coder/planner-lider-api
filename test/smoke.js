@@ -159,11 +159,72 @@ async function main() {
   r = await json('POST', '/metas', { nome: 'Reduzir retrabalho', tipo: 'operacional' }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const meta = r.body;
+  assert.strictEqual(meta.status_execucao, 'no_prazo'); // default quando não informado
+
+  console.log('→ criar meta completa (Painel do Líder: Direção, Meta e Medição, BSC, OKR, Execução)');
+  r = await json('POST', '/metas', {
+    nome: 'Aumentar NPS da área', tipo: 'estrategico', indicador: 'NPS',
+    pontoPartida: '42 pts', valor: '60 pts', prazo: '2026-12-31', frequenciaAcompanhamento: 'mensal',
+    porqueImporta: 'NPS baixo está gerando churn de clientes internos.',
+    perspectivaBsc: 'clientes',
+    okrObjetivo: 'Elevar a satisfação percebida pelos clientes internos',
+    okrKr1: 'NPS de 42 para 60', okrKr2: 'Reduzir tempo de resposta em 30%', okrKr3: '',
+    acaoPrioritaria: 'Mapear os 3 principais motivos de detração', responsavelAcao: 'Carla Mendes',
+    proximaVerificacao: '2026-11-01', statusExecucao: 'atencao',
+  }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const metaCompleta = r.body;
+  assert.strictEqual(metaCompleta.ponto_partida, '42 pts');
+  assert.strictEqual(metaCompleta.perspectiva_bsc, 'clientes');
+  assert.strictEqual(metaCompleta.okr_kr1, 'NPS de 42 para 60');
+  assert.strictEqual(metaCompleta.status_execucao, 'atencao');
+
+  console.log('→ perspectiva do BSC inválida é rejeitada');
+  r = await json('POST', '/metas', { nome: 'Meta inválida', tipo: 'tatico', perspectivaBsc: 'marketing' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ atualizar meta completa via PUT parcial (COALESCE não apaga os outros campos novos)');
+  r = await json('PUT', `/metas/${metaCompleta.id}`, { statusExecucao: 'concluido' }, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.status_execucao, 'concluido');
+  assert.strictEqual(r.body.perspectiva_bsc, 'clientes'); // não foi reenviado, tem que continuar
+  assert.strictEqual(r.body.okr_kr1, 'NPS de 42 para 60');
 
   console.log('→ criar atividade vinculada ao liderado e à meta');
   r = await json('POST', '/atividades', { titulo: 'Padronizar checklist', resultado: 'alto', tipo: 'operacional', status: 'andamento', responsavelId: liderado.id, metaId: meta.id }, tokenLider);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const atividade = r.body;
+  assert.strictEqual(atividade.tipo_vinculo, 'meta'); // metaId sem tipoVinculo assume 'meta' (compatibilidade)
+
+  console.log('→ vincular atividade ao OKR de uma meta');
+  r = await json('POST', '/atividades', { titulo: 'Mapear motivos de detração', resultado: 'alto', tipo: 'estrategico', tipoVinculo: 'okr', metaId: metaCompleta.id }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.tipo_vinculo, 'okr');
+  assert.strictEqual(r.body.meta_id, metaCompleta.id);
+
+  console.log('→ vincular atividade à perspectiva do BSC de uma meta');
+  r = await json('POST', '/atividades', { titulo: 'Entrevistar clientes detratores', resultado: 'medio', tipo: 'tatico', tipoVinculo: 'bsc', metaId: metaCompleta.id }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.tipo_vinculo, 'bsc');
+
+  console.log('→ vincular atividade a um item do Plano de Ação');
+  r = await json('GET', '/plano-acao', null, tokenLider);
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.length > 0, 'a seed padrão devia ter criado itens de plano de ação pro líder');
+  const itemPlanoAcao = r.body[0];
+  r = await json('POST', '/atividades', { titulo: 'Executar ação do plano', resultado: 'alto', tipo: 'operacional', tipoVinculo: 'plano_acao', planoAcaoId: itemPlanoAcao.id }, tokenLider);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.strictEqual(r.body.tipo_vinculo, 'plano_acao');
+  assert.strictEqual(r.body.plano_acao_id, itemPlanoAcao.id);
+  assert.strictEqual(r.body.meta_id, null);
+
+  console.log('→ vincular a plano_acao sem informar o item é rejeitado');
+  r = await json('POST', '/atividades', { titulo: 'Sem item', resultado: 'alto', tipo: 'operacional', tipoVinculo: 'plano_acao' }, tokenLider);
+  assert.strictEqual(r.status, 400);
+
+  console.log('→ vincular a um item de plano de ação de outro líder é rejeitado');
+  r = await json('POST', '/atividades', { titulo: 'Item de outro líder', resultado: 'alto', tipo: 'operacional', tipoVinculo: 'plano_acao', planoAcaoId: '00000000-0000-0000-0000-000000000000' }, tokenLider);
+  assert.strictEqual(r.status, 400);
 
   console.log('→ liderado vê a própria atividade');
   r = await json('GET', '/atividades/minhas', null, tokenLiderado);
