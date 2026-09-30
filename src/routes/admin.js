@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const { pool } = require('../db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin, assinarToken } = require('../middleware/auth');
 const { enviarConviteLider } = require('../mail');
 
 const router = express.Router();
@@ -150,6 +150,22 @@ router.put('/lideres/:id/senha', async (req, res) => {
   );
   if (!rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
   res.status(204).end();
+});
+
+// "Visualizar como" — o admin confere o que o líder já preencheu sem
+// precisar da senha dele. Emite um token de verdade pro painel do líder
+// (reaproveita a tela inteira), mas marcado somenteLeitura e de vida curta:
+// requireAuth bloqueia qualquer POST/PUT/DELETE feito com ele, então não tem
+// como o admin escrever por engano nos dados do líder enquanto olha.
+router.post('/lideres/:id/visualizar', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, role, nome, email, area, cargo, turma_id FROM users WHERE id = $1 AND role = 'lider'`,
+    [req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
+  const lider = rows[0];
+  const token = assinarToken(lider, { somenteLeitura: true, expiresIn: '20m' });
+  res.json({ token, user: { id: lider.id, role: lider.role, nome: lider.nome, email: lider.email, area: lider.area, cargo: lider.cargo, turmaId: lider.turma_id, somenteLeitura: true } });
 });
 
 // ---- Trilha de Desafios da turma (template — só o admin edita) ----

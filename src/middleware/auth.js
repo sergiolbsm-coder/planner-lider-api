@@ -5,17 +5,21 @@ if (!JWT_SECRET) {
   throw new Error('JWT_SECRET não configurada. Defina uma string aleatória longa como variável de ambiente.');
 }
 
-function assinarToken(user) {
+// opts.somenteLeitura marca o token pro modo "Visualizar como" do admin —
+// requireAuth abaixo bloqueia qualquer escrita feita com um token assim,
+// não importa por qual rota, então nenhuma tela precisa saber que está em
+// modo visualização pra ficar segura contra escrita por engano.
+function assinarToken(user, opts = {}) {
   // liderId: o próprio id (se líder) ou o id do líder dono do quadro (se liderado).
   const liderId = user.role === 'lider' ? user.id : user.lider_id;
   // email vai no token pra dar pra listar/trocar entre as outras contas que
   // usam o mesmo e-mail (ex: admin que também é líder) sem pedir senha de novo.
-  return jwt.sign(
-    { id: user.id, role: user.role, liderId, turmaId: user.turma_id || null, nome: user.nome, email: user.email },
-    JWT_SECRET,
-    { expiresIn: '30d' }
-  );
+  const payload = { id: user.id, role: user.role, liderId, turmaId: user.turma_id || null, nome: user.nome, email: user.email };
+  if (opts.somenteLeitura) payload.somenteLeitura = true;
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: opts.expiresIn || '30d' });
 }
+
+const METODOS_ESCRITA = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
@@ -24,6 +28,9 @@ function requireAuth(req, res, next) {
 
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    if (req.user.somenteLeitura && METODOS_ESCRITA.includes(req.method)) {
+      return res.status(403).json({ erro: 'Modo de visualização é somente leitura.' });
+    }
     next();
   } catch (err) {
     return res.status(401).json({ erro: 'Token inválido ou expirado.' });

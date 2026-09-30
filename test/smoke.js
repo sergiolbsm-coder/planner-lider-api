@@ -137,6 +137,34 @@ async function main() {
   r = await json('POST', '/admin/turmas', { nome: 'Outra Turma' }, tokenLider);
   assert.strictEqual(r.status, 403);
 
+  console.log('→ admin abre "Visualizar como" o líder sem saber a senha dele');
+  r = await json('POST', `/admin/lideres/${carlaLiderId}/visualizar`, null, tokenAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.user.id, carlaLiderId);
+  assert.strictEqual(r.body.user.role, 'lider');
+  assert.strictEqual(r.body.user.somenteLeitura, true);
+  const tokenVisualizacao = r.body.token;
+
+  console.log('→ líder que não é admin não pode abrir "Visualizar como"');
+  r = await json('POST', `/admin/lideres/${carlaLiderId}/visualizar`, null, tokenLider);
+  assert.strictEqual(r.status, 403);
+
+  console.log('→ token de visualização lê os dados do líder normalmente');
+  r = await json('GET', '/liderados', null, tokenVisualizacao);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+
+  console.log('→ token de visualização não consegue escrever nada (POST/PUT/DELETE bloqueados)');
+  r = await json('POST', '/liderados', { nome: 'Teste', email: 'teste-visu@teste.com' }, tokenVisualizacao);
+  assert.strictEqual(r.status, 403, JSON.stringify(r.body));
+  r = await json('PUT', `/liderados/${carlaLiderId}`, { nome: 'Hackeado' }, tokenVisualizacao);
+  assert.strictEqual(r.status, 403);
+  r = await json('DELETE', `/liderados/${carlaLiderId}`, null, tokenVisualizacao);
+  assert.strictEqual(r.status, 403);
+
+  console.log('→ "Visualizar como" de líder inexistente devolve 404');
+  r = await json('POST', '/admin/lideres/00000000-0000-0000-0000-000000000000/visualizar', null, tokenAdmin);
+  assert.strictEqual(r.status, 404);
+
   console.log('→ login com senha errada deve falhar');
   r = await json('POST', '/auth/login', { email: 'carla@teste.com', senha: 'errada' });
   assert.strictEqual(r.status, 401);
