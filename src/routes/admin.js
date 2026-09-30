@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const multer = require('multer');
 const { pool } = require('../db');
 const { requireAuth, requireAdmin, assinarToken } = require('../middleware/auth');
@@ -150,6 +151,35 @@ router.put('/lideres/:id/senha', async (req, res) => {
   );
   if (!rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
   res.status(204).end();
+});
+
+// Reenvia o convite quando o líder não recebeu (ou perdeu) o e-mail original
+// — não dá pra reenviar a MESMA senha (só guardamos o hash), então gera uma
+// nova senha aleatória, salva e manda o e-mail de novo com ela. Se o e-mail
+// falhar (ou não estiver configurado), devolve a senha pro admin repassar
+// manualmente — mesma rede de segurança do cadastro inicial.
+router.post('/lideres/:id/reenviar-convite', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.nome, u.email, t.nome AS turma_nome FROM users u
+     LEFT JOIN turmas t ON t.id = u.turma_id
+     WHERE u.id = $1 AND u.role = 'lider'`,
+    [req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
+  const lider = rows[0];
+
+  const senha = crypto.randomBytes(6).toString('base64url');
+  const senhaHash = await bcrypt.hash(senha, 10);
+  await pool.query('UPDATE users SET senha_hash = $1 WHERE id = $2', [senhaHash, lider.id]);
+
+  try {
+    const resultado = await enviarConviteLider({ nome: lider.nome, email: lider.email, senha, turmaNome: lider.turma_nome });
+    if (resultado.enviado) return res.json({ enviado: true });
+    return res.json({ enviado: false, senha }); // e-mail não configurado neste ambiente
+  } catch (err) {
+    console.error('Falha ao reenviar convite para', lider.email, err);
+    return res.json({ enviado: false, senha });
+  }
 });
 
 // "Visualizar como" — o admin confere o que o líder já preencheu sem

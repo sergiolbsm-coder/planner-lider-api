@@ -671,6 +671,20 @@ async function main() {
   r = await json('PUT', `/admin/lideres/00000000-0000-0000-0000-000000000000/senha`, { senha: '123456' }, tokenAdmin);
   assert.strictEqual(r.status, 404);
 
+  console.log('→ admin reenvia o convite (gera senha nova — sem RESEND configurado no teste, devolve pro admin repassar)');
+  const reenvio = await json('POST', `/admin/lideres/${outroLider.body.id}/reenviar-convite`, null, tokenAdmin);
+  assert.strictEqual(reenvio.status, 200, JSON.stringify(reenvio.body));
+  assert.strictEqual(reenvio.body.enviado, false); // ambiente de teste não tem RESEND_API_KEY
+  assert.ok(reenvio.body.senha && reenvio.body.senha.length >= 6, 'deveria devolver uma senha nova gerada');
+  r = await json('POST', '/auth/login', { email: 'outra@teste.com', senha: 'novaSenha123' });
+  assert.strictEqual(r.status, 401, 'senha antiga deveria ter sido trocada pelo reenvio');
+  r = await json('POST', '/auth/login', { email: 'outra@teste.com', senha: reenvio.body.senha });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+
+  console.log('→ reenviar convite de líder inexistente devolve 404');
+  r = await json('POST', '/admin/lideres/00000000-0000-0000-0000-000000000000/reenviar-convite', null, tokenAdmin);
+  assert.strictEqual(r.status, 404);
+
   console.log('→ plano de gestão: leitura antes de salvar vem vazia, sem criar linha');
   r = await json('GET', '/plano-gestao', null, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
