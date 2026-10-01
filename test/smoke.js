@@ -579,6 +579,72 @@ async function main() {
   r = await json('GET', '/arquivos', null, tokenLider);
   assert.strictEqual(r.body.length, 1); // arquivoId foi de vez; a cópia do arquivoId2 continua
 
+  console.log('→ Área Individual: Trainer manda uma mensagem só pra um líder específico');
+  r = await json('POST', `/admin/lideres/${carlaLiderId}/mensagens`, { titulo: 'Bem-vinda!', mensagem: 'Carla, vi seu progresso na trilha — ótimo trabalho.' }, tokenAdmin);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const mensagemId = r.body.id;
+  assert.strictEqual(r.body.lida, false);
+
+  console.log('→ líder vê a própria mensagem individual, mas não escreve nela');
+  r = await json('GET', '/individual/mensagens', null, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.length, 1);
+  assert.strictEqual(r.body[0].titulo, 'Bem-vinda!');
+  r = await json('PUT', `/individual/mensagens/${mensagemId}/lida`, null, tokenLider);
+  assert.strictEqual(r.status, 204);
+  r = await json('GET', '/individual/mensagens', null, tokenLider);
+  assert.strictEqual(r.body[0].lida, true);
+
+  console.log('→ outro líder não vê a mensagem individual que não é dele');
+  r = await json('GET', '/individual/mensagens', null, outroLiderTokenTmp);
+  assert.strictEqual(r.body.length, 0);
+
+  console.log('→ liderado não acessa a Área Individual (é entre Trainer e líder, não desce pro liderado)');
+  r = await json('GET', '/individual/mensagens', null, tokenLiderado);
+  assert.strictEqual(r.status, 403);
+
+  console.log('→ admin edita e depois exclui a mensagem individual');
+  r = await json('PUT', `/admin/mensagens/${mensagemId}`, { titulo: 'Bem-vinda (editado)' }, tokenAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.titulo, 'Bem-vinda (editado)');
+  assert.strictEqual(r.body.mensagem, 'Carla, vi seu progresso na trilha — ótimo trabalho.'); // não apagou por ser PUT parcial
+  r = await json('DELETE', `/admin/mensagens/${mensagemId}`, null, tokenAdmin);
+  assert.strictEqual(r.status, 204);
+  r = await json('GET', '/individual/mensagens', null, tokenLider);
+  assert.strictEqual(r.body.length, 0);
+
+  console.log('→ Área Individual: Trainer sobe um arquivo só pra um líder (multipart)');
+  const conteudoIndividual = Buffer.from('%PDF-1.4 arquivo individual de teste');
+  const formIndividual = new FormData();
+  formIndividual.append('arquivo', new Blob([conteudoIndividual], { type: 'application/pdf' }), 'plano-individual.pdf');
+  formIndividual.append('nome', 'Plano de desenvolvimento individual');
+  r = await upload(`/admin/lideres/${carlaLiderId}/arquivos-individuais`, formIndividual, tokenAdmin);
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  const arquivoIndividualId = r.body.id;
+
+  console.log('→ o líder vê e baixa o arquivo individual; a turma toda não enxerga ele em /arquivos');
+  r = await json('GET', '/individual/arquivos', null, tokenLider);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.length, 1);
+  assert.strictEqual(r.body[0].nome, 'Plano de desenvolvimento individual');
+  baixado = await download(`/individual/arquivos/${arquivoIndividualId}/download`, tokenLider);
+  assert.strictEqual(baixado.status, 200);
+  assert.ok(baixado.buffer.equals(conteudoIndividual));
+  r = await json('GET', '/arquivos', null, tokenLider);
+  assert.strictEqual(r.body.some(a => a.id === arquivoIndividualId), false, 'arquivo individual não pode aparecer nos Arquivos da Aula');
+
+  console.log('→ outro líder não vê nem baixa o arquivo individual de outra pessoa');
+  r = await json('GET', '/individual/arquivos', null, outroLiderTokenTmp);
+  assert.strictEqual(r.body.length, 0);
+  baixado = await download(`/individual/arquivos/${arquivoIndividualId}/download`, outroLiderTokenTmp);
+  assert.strictEqual(baixado.status, 404);
+
+  console.log('→ excluir o arquivo individual apaga de vez (não está vinculado a nenhuma turma)');
+  r = await json('DELETE', `/admin/lideres/${carlaLiderId}/arquivos-individuais/${arquivoIndividualId}`, null, tokenAdmin);
+  assert.strictEqual(r.status, 204);
+  r = await json('GET', '/individual/arquivos', null, tokenLider);
+  assert.strictEqual(r.body.length, 0);
+
   console.log('→ admin monta a trilha de desafios da turma (título/prazo/pontos)');
   r = await json('POST', `/admin/turmas/${turmaId}/desafios`, { titulo: 'Montar minha equipe', descricao: 'Cadastrar liderados.', secaoAlvo: 'liderados', prazo: '2099-01-01', pontos: 20, ordem: 0 }, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));

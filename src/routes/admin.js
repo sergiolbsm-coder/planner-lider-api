@@ -52,7 +52,10 @@ router.put('/turmas/:id', async (req, res) => {
 router.delete('/turmas/:id', async (req, res) => {
   const { rowCount } = await pool.query('DELETE FROM turmas WHERE id = $1', [req.params.id]);
   if (!rowCount) return res.status(404).json({ erro: 'Turma não encontrada.' });
-  await pool.query('DELETE FROM arquivos_aula WHERE id NOT IN (SELECT arquivo_id FROM arquivo_turmas)');
+  // Nunca apaga um arquivo que ainda esteja vinculado individualmente a um líder.
+  await pool.query(
+    'DELETE FROM arquivos_aula WHERE id NOT IN (SELECT arquivo_id FROM arquivo_turmas) AND id NOT IN (SELECT arquivo_id FROM arquivo_lideres)'
+  );
   res.status(204).end();
 });
 
@@ -390,19 +393,117 @@ router.post('/turmas/:turmaId/pastas/transferir', async (req, res) => {
   res.json({ transferidos: arquivos.length });
 });
 
-// Remove o arquivo desta turma. Se não sobrar nenhuma outra turma vinculada,
-// apaga o arquivo de vez (senão ficaria lixo órfão pra sempre no banco).
+// Remove o arquivo desta turma. Se não sobrar nenhum outro vínculo (turma OU
+// individual com um líder), apaga o arquivo de vez (senão ficaria lixo órfão
+// pra sempre no banco).
 router.delete('/turmas/:turmaId/arquivos/:id', async (req, res) => {
   const { rowCount } = await pool.query(
     'DELETE FROM arquivo_turmas WHERE arquivo_id = $1 AND turma_id = $2',
     [req.params.id, req.params.turmaId]
   );
   if (!rowCount) return res.status(404).json({ erro: 'Arquivo não encontrado nesta turma.' });
+  await excluirArquivoSeOrfao(req.params.id);
+  res.status(204).end();
+});
 
-  const restante = await pool.query('SELECT 1 FROM arquivo_turmas WHERE arquivo_id = $1 LIMIT 1', [req.params.id]);
+// Área Individual (Trainer → um líder específico) — mensagens e arquivos
+// vistos só por aquela conta, nunca pela turma toda.
+async function excluirArquivoSeOrfao(arquivoId) {
+  const restante = await pool.query(
+    'SELECT 1 FROM arquivo_turmas WHERE arquivo_id = $1 UNION SELECT 1 FROM arquivo_lideres WHERE arquivo_id = $1 LIMIT 1',
+    [arquivoId]
+  );
   if (!restante.rows.length) {
-    await pool.query('DELETE FROM arquivos_aula WHERE id = $1', [req.params.id]);
+    await pool.query('DELETE FROM arquivos_aula WHERE id = $1', [arquivoId]);
   }
+}
+
+router.get('/lideres/:liderId/mensagens', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT * FROM mensagens_individuais WHERE lider_id = $1 ORDER BY criado_em DESC',
+    [req.params.liderId]
+  );
+  res.json(rows);
+});
+
+router.post('/lideres/:liderId/mensagens', async (req, res) => {
+  const { titulo, mensagem } = req.body || {};
+  if (!titulo || !titulo.trim() || !mensagem || !mensagem.trim()) {
+    return res.status(400).json({ erro: 'Informe título e mensagem.' });
+  }
+  const lider = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'lider'", [req.params.liderId]);
+  if (!lider.rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
+
+  const { rows } = await pool.query(
+    'INSERT INTO mensagens_individuais (lider_id, titulo, mensagem) VALUES ($1,$2,$3) RETURNING *',
+    [req.params.liderId, titulo.trim(), mensagem.trim()]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.put('/mensagens/:id', async (req, res) => {
+  const { titulo, mensagem } = req.body || {};
+  const { rows } = await pool.query(
+    `UPDATE mensagens_individuais SET titulo = COALESCE($1, titulo), mensagem = COALESCE($2, mensagem)
+     WHERE id = $3 RETURNING *`,
+    [titulo && titulo.trim(), mensagem && mensagem.trim(), req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ erro: 'Mensagem não encontrada.' });
+  res.json(rows[0]);
+});
+
+router.delete('/mensagens/:id', async (req, res) => {
+  const { rowCount } = await pool.query('DELETE FROM mensagens_individuais WHERE id = $1', [req.params.id]);
+  if (!rowCount) return res.status(404).json({ erro: 'Mensagem não encontrada.' });
+  res.status(204).end();
+});
+
+router.get('/lideres/:liderId/arquivos-individuais', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT ${SELECT_ARQUIVO_METADADOS} FROM arquivos_aula a
+     JOIN arquivo_lideres al ON al.arquivo_id = a.id AND al.lider_id = $1
+     ORDER BY a.criado_em DESC`,
+    [req.params.liderId]
+  );
+  res.json(rows);
+});
+
+router.post('/lideres/:liderId/arquivos-individuais', upload.single('arquivo'), async (req, res) => {
+  const { liderId } = req.params;
+  const lider = await pool.query("SELECT id FROM users WHERE id = $1 AND role = 'lider'", [liderId]);
+  if (!lider.rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
+  if (!req.file) return res.status(400).json({ erro: 'Selecione um arquivo.' });
+
+  const nome = (req.body.nome || req.file.originalname || 'arquivo').trim();
+  const descricao = (req.body.descricao || '').trim() || null;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO arquivos_aula (nome, descricao, tipo_mime, tamanho_bytes, conteudo)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, nome, descricao, pasta, tipo_mime, tamanho_bytes, criado_em`,
+      [nome, descricao, req.file.mimetype || 'application/octet-stream', req.file.size, req.file.buffer]
+    );
+    await client.query('INSERT INTO arquivo_lideres (arquivo_id, lider_id) VALUES ($1,$2)', [rows[0].id, liderId]);
+    await client.query('COMMIT');
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/lideres/:liderId/arquivos-individuais/:id', async (req, res) => {
+  const { rowCount } = await pool.query(
+    'DELETE FROM arquivo_lideres WHERE arquivo_id = $1 AND lider_id = $2',
+    [req.params.id, req.params.liderId]
+  );
+  if (!rowCount) return res.status(404).json({ erro: 'Arquivo não encontrado para este líder.' });
+  await excluirArquivoSeOrfao(req.params.id);
   res.status(204).end();
 });
 

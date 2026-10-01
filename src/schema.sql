@@ -428,3 +428,24 @@ CREATE INDEX IF NOT EXISTS idx_arquivo_turmas_turma_id ON arquivo_turmas(turma_i
 INSERT INTO arquivo_turmas (arquivo_id, turma_id)
 SELECT id, turma_id FROM arquivos_aula WHERE turma_id IS NOT NULL
 ON CONFLICT DO NOTHING;
+
+-- Área Individual (Trainer → um líder específico): mensagens e arquivos que
+-- não são abertos pra turma toda, só pra aquela conta. Reaproveita
+-- arquivos_aula/BYTEA (mesmo padrão de arquivo_turmas) em vez de duplicar o
+-- armazenamento — só muda quem enxerga.
+CREATE TABLE IF NOT EXISTS arquivo_lideres (
+  arquivo_id UUID NOT NULL REFERENCES arquivos_aula(id) ON DELETE CASCADE,
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (arquivo_id, lider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_arquivo_lideres_lider_id ON arquivo_lideres(lider_id);
+
+CREATE TABLE IF NOT EXISTS mensagens_individuais (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lider_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  titulo TEXT NOT NULL,
+  mensagem TEXT NOT NULL,
+  lida BOOLEAN NOT NULL DEFAULT false,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mensagens_individuais_lider_id ON mensagens_individuais(lider_id);

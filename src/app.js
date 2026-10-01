@@ -36,6 +36,7 @@ app.use('/projetos', require('./routes/projetos'));
 app.use('/dashboard-config', require('./routes/dashboardConfig'));
 app.use('/autoavaliacoes', require('./routes/autoavaliacoes'));
 app.use('/arquivos', require('./routes/arquivos'));
+app.use('/individual', require('./routes/individual'));
 app.use('/desafios', require('./routes/desafios'));
 app.use('/plano-gestao', require('./routes/planoGestao'));
 app.use('/diagnostico', require('./routes/diagnostico'));
