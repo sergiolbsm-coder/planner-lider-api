@@ -427,7 +427,7 @@ router.get('/lideres/:liderId/mensagens', async (req, res) => {
 });
 
 router.post('/lideres/:liderId/mensagens', async (req, res) => {
-  const { titulo, mensagem } = req.body || {};
+  const { titulo, mensagem, link } = req.body || {};
   if (!titulo || !titulo.trim() || !mensagem || !mensagem.trim()) {
     return res.status(400).json({ erro: 'Informe título e mensagem.' });
   }
@@ -435,20 +435,29 @@ router.post('/lideres/:liderId/mensagens', async (req, res) => {
   if (!lider.rows.length) return res.status(404).json({ erro: 'Líder não encontrado.' });
 
   const { rows } = await pool.query(
-    'INSERT INTO mensagens_individuais (lider_id, titulo, mensagem) VALUES ($1,$2,$3) RETURNING *',
-    [req.params.liderId, titulo.trim(), mensagem.trim()]
+    'INSERT INTO mensagens_individuais (lider_id, titulo, mensagem, link) VALUES ($1,$2,$3,$4) RETURNING *',
+    [req.params.liderId, titulo.trim(), mensagem.trim(), (link && link.trim()) || null]
   );
   res.status(201).json(rows[0]);
 });
 
+// link usa hasOwnProperty porque limpar o link é uma ação válida, diferente
+// de "campo omitido" (mesmo padrão já usado em responsavelId/metaId etc.) —
+// por isso lê a linha atual em vez de resolver isso só com COALESCE.
 router.put('/mensagens/:id', async (req, res) => {
-  const { titulo, mensagem } = req.body || {};
+  const body = req.body || {};
+  const atual = await pool.query('SELECT * FROM mensagens_individuais WHERE id = $1', [req.params.id]);
+  if (!atual.rows.length) return res.status(404).json({ erro: 'Mensagem não encontrada.' });
+
+  const linkFinal = Object.prototype.hasOwnProperty.call(body, 'link')
+    ? ((body.link && body.link.trim()) || null)
+    : atual.rows[0].link;
+
   const { rows } = await pool.query(
-    `UPDATE mensagens_individuais SET titulo = COALESCE($1, titulo), mensagem = COALESCE($2, mensagem)
-     WHERE id = $3 RETURNING *`,
-    [titulo && titulo.trim(), mensagem && mensagem.trim(), req.params.id]
+    `UPDATE mensagens_individuais SET titulo = COALESCE($1, titulo), mensagem = COALESCE($2, mensagem), link = $3
+     WHERE id = $4 RETURNING *`,
+    [body.titulo && body.titulo.trim(), body.mensagem && body.mensagem.trim(), linkFinal, req.params.id]
   );
-  if (!rows.length) return res.status(404).json({ erro: 'Mensagem não encontrada.' });
   res.json(rows[0]);
 });
 

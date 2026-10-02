@@ -449,3 +449,7 @@ CREATE TABLE IF NOT EXISTS mensagens_individuais (
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_mensagens_individuais_lider_id ON mensagens_individuais(lider_id);
+
+-- Link opcional (ex: reunião, material externo) anexado à mensagem — exibido
+-- pro líder como link clicável, com o texto reduzido, não a URL inteira.
+ALTER TABLE mensagens_individuais ADD COLUMN IF NOT EXISTS link TEXT;

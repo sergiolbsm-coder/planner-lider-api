@@ -579,17 +579,19 @@ async function main() {
   r = await json('GET', '/arquivos', null, tokenLider);
   assert.strictEqual(r.body.length, 1); // arquivoId foi de vez; a cópia do arquivoId2 continua
 
-  console.log('→ Área Individual: Trainer manda uma mensagem só pra um líder específico');
-  r = await json('POST', `/admin/lideres/${carlaLiderId}/mensagens`, { titulo: 'Bem-vinda!', mensagem: 'Carla, vi seu progresso na trilha — ótimo trabalho.' }, tokenAdmin);
+  console.log('→ Área Individual: Trainer manda uma mensagem com link só pra um líder específico');
+  r = await json('POST', `/admin/lideres/${carlaLiderId}/mensagens`, { titulo: 'Bem-vinda!', mensagem: 'Carla, vi seu progresso na trilha — ótimo trabalho.', link: 'https://meet.google.com/abc-defg-hij' }, tokenAdmin);
   assert.strictEqual(r.status, 201, JSON.stringify(r.body));
   const mensagemId = r.body.id;
   assert.strictEqual(r.body.lida, false);
+  assert.strictEqual(r.body.link, 'https://meet.google.com/abc-defg-hij');
 
-  console.log('→ líder vê a própria mensagem individual, mas não escreve nela');
+  console.log('→ líder vê a própria mensagem individual (com o link), mas não escreve nela');
   r = await json('GET', '/individual/mensagens', null, tokenLider);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.length, 1);
   assert.strictEqual(r.body[0].titulo, 'Bem-vinda!');
+  assert.strictEqual(r.body[0].link, 'https://meet.google.com/abc-defg-hij');
   r = await json('PUT', `/individual/mensagens/${mensagemId}/lida`, null, tokenLider);
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/individual/mensagens', null, tokenLider);
@@ -603,11 +605,15 @@ async function main() {
   r = await json('GET', '/individual/mensagens', null, tokenLiderado);
   assert.strictEqual(r.status, 403);
 
-  console.log('→ admin edita e depois exclui a mensagem individual');
+  console.log('→ admin edita o texto sem apagar o link (PUT parcial) e depois limpa o link explicitamente');
   r = await json('PUT', `/admin/mensagens/${mensagemId}`, { titulo: 'Bem-vinda (editado)' }, tokenAdmin);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.titulo, 'Bem-vinda (editado)');
   assert.strictEqual(r.body.mensagem, 'Carla, vi seu progresso na trilha — ótimo trabalho.'); // não apagou por ser PUT parcial
+  assert.strictEqual(r.body.link, 'https://meet.google.com/abc-defg-hij'); // idem
+  r = await json('PUT', `/admin/mensagens/${mensagemId}`, { link: '' }, tokenAdmin);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  assert.strictEqual(r.body.link, null);
   r = await json('DELETE', `/admin/mensagens/${mensagemId}`, null, tokenAdmin);
   assert.strictEqual(r.status, 204);
   r = await json('GET', '/individual/mensagens', null, tokenLider);
